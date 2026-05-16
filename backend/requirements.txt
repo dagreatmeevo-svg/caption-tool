@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-multipart
+yt-dlp
+groq
+openai
+python-dotenv

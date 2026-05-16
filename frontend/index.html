@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arabic Caption Tool — أضف ترجمة عربية</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { font-family: 'Cairo', sans-serif; }
+
+    body {
+      background: #0d0d0d;
+      color: #f0f0f0;
+      min-height: 100vh;
+    }
+
+    .drop-zone {
+      border: 2px dashed #444;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .drop-zone.drag-over {
+      border-color: #6c63ff;
+      background: rgba(108, 99, 255, 0.08);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #6c63ff, #4f46e5);
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-primary:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-download {
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-download:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    .progress-bar-inner {
+      transition: width 0.4s ease;
+      background: linear-gradient(90deg, #6c63ff, #a78bfa);
+    }
+
+    .step-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #333;
+      transition: background 0.3s;
+    }
+    .step-dot.active { background: #6c63ff; }
+    .step-dot.done { background: #22c55e; }
+
+    /* Slider styling */
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: #333;
+      outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #6c63ff;
+      cursor: pointer;
+      box-shadow: 0 0 0 3px rgba(108,99,255,0.2);
+      transition: box-shadow 0.2s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover {
+      box-shadow: 0 0 0 5px rgba(108,99,255,0.3);
+    }
+
+    .emoji-btn {
+      transition: all 0.15s ease;
+    }
+    .emoji-btn.active {
+      border-color: #6c63ff;
+      background: rgba(108,99,255,0.15);
+      transform: scale(1.03);
+    }
+    .emoji-btn:not(.active) {
+      border-color: transparent;
+      background: #252525;
+    }
+    .emoji-btn:not(.active):hover {
+      background: #2f2f2f;
+    }
+
+    #error-box { display: none; }
+    #result-box { display: none; }
+    #progress-box { display: none; }
+  </style>
+</head>
+<body class="flex items-center justify-center p-4">
+  <div class="w-full max-w-xl">
+
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <div class="text-5xl mb-3">🎬</div>
+      <h1 class="text-3xl font-bold text-white">أضف ترجمة عربية</h1>
+      <p class="text-gray-400 mt-2 text-sm">ارفع فيديو أو الصق رابط TikTok / YouTube / Instagram</p>
+    </div>
+
+    <!-- Input Card -->
+    <div id="input-card" class="bg-[#1a1a1a] rounded-2xl p-6 shadow-xl border border-[#2a2a2a]">
+
+      <!-- Tab switcher -->
+      <div class="flex gap-2 mb-5">
+        <button id="tab-url" onclick="switchTab('url')"
+          class="flex-1 py-2 rounded-lg text-sm font-semibold transition-colors bg-[#6c63ff] text-white">
+          🔗 رابط
+        </button>
+        <button id="tab-file" onclick="switchTab('file')"
+          class="flex-1 py-2 rounded-lg text-sm font-semibold transition-colors bg-[#252525] text-gray-400 hover:bg-[#2f2f2f]">
+          📁 رفع ملف
+        </button>
+      </div>
+
+      <!-- URL input -->
+      <div id="url-panel">
+        <input
+          id="url-input"
+          type="text"
+          placeholder="https://www.tiktok.com/@user/video/..."
+          class="w-full bg-[#252525] border border-[#333] rounded-xl px-4 py-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-[#6c63ff] transition-colors"
+          dir="ltr"
+        />
+        <p class="text-xs text-gray-500 mt-2 text-right">يدعم: TikTok · YouTube · Instagram Reels</p>
+      </div>
+
+      <!-- File drop zone -->
+      <div id="file-panel" class="hidden">
+        <div
+          id="drop-zone"
+          class="drop-zone rounded-xl p-8 text-center cursor-pointer"
+          onclick="document.getElementById('file-input').click()"
+          ondragover="onDragOver(event)"
+          ondragleave="onDragLeave(event)"
+          ondrop="onDrop(event)"
+        >
+          <div class="text-4xl mb-2">📤</div>
+          <p class="text-gray-300 font-semibold">اسحب الفيديو هنا</p>
+          <p class="text-gray-500 text-xs mt-1">أو اضغط للاختيار</p>
+          <p id="file-name" class="text-[#6c63ff] text-sm mt-3 hidden"></p>
+        </div>
+        <input id="file-input" type="file" accept="video/*" class="hidden" onchange="onFileSelect(event)" />
+      </div>
+
+      <!-- Divider -->
+      <div class="border-t border-[#2a2a2a] my-5"></div>
+
+      <!-- Font Size Control -->
+      <div>
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-sm font-semibold text-gray-200">🔤 حجم الخط</span>
+          <div class="flex items-center gap-2">
+            <span id="font-size-val" class="text-[#a78bfa] font-bold text-lg leading-none">22</span>
+            <span class="text-gray-500 text-xs">px</span>
+          </div>
+        </div>
+
+        <!-- Preset chips -->
+        <div class="grid grid-cols-4 gap-2 mb-3">
+          <button onclick="setFontPreset(16, this)" class="preset-chip py-1.5 rounded-lg text-xs font-bold bg-[#252525] text-gray-400 hover:bg-[#333] transition-colors">
+            صغير<br/><span class="text-[10px] opacity-60">16px</span>
+          </button>
+          <button onclick="setFontPreset(22, this)" class="preset-chip py-1.5 rounded-lg text-xs font-bold bg-[#6c63ff] text-white transition-colors">
+            متوسط<br/><span class="text-[10px] opacity-75">22px</span>
+          </button>
+          <button onclick="setFontPreset(34, this)" class="preset-chip py-1.5 rounded-lg text-xs font-bold bg-[#252525] text-gray-400 hover:bg-[#333] transition-colors">
+            كبير<br/><span class="text-[10px] opacity-60">34px</span>
+          </button>
+          <button onclick="setFontPreset(48, this)" class="preset-chip py-1.5 rounded-lg text-xs font-bold bg-[#252525] text-gray-400 hover:bg-[#333] transition-colors">
+            ضخم<br/><span class="text-[10px] opacity-60">48px</span>
+          </button>
+        </div>
+
+        <input
+          type="range"
+          id="font-size-slider"
+          min="10"
+          max="60"
+          value="22"
+          oninput="onSliderChange(this.value)"
+        />
+        <div class="flex justify-between text-[10px] text-gray-600 mt-1">
+          <span>10</span>
+          <span>60</span>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="border-t border-[#2a2a2a] my-5"></div>
+
+      <!-- Emoji Toggle -->
+      <div>
+        <p class="text-sm font-semibold text-gray-200 mb-3">✨ إضافة إيموجي للترجمة؟</p>
+        <div class="flex gap-3">
+          <button id="emoji-yes" onclick="setEmoji(true)"
+            class="emoji-btn flex-1 py-3 rounded-xl text-base font-bold border-2 flex items-center justify-center gap-2">
+            <span class="text-2xl">👍</span>
+            <span class="text-gray-200">نعم</span>
+          </button>
+          <button id="emoji-no" onclick="setEmoji(false)"
+            class="emoji-btn active flex-1 py-3 rounded-xl text-base font-bold border-2 flex items-center justify-center gap-2">
+            <span class="text-2xl">👎</span>
+            <span class="text-gray-200">لا</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="border-t border-[#2a2a2a] my-5"></div>
+
+      <!-- Submit button -->
+      <button
+        id="submit-btn"
+        onclick="startProcess()"
+        class="btn-primary w-full py-3 rounded-xl text-white font-bold text-base"
+      >
+        ✨ أضف الترجمة العربية
+      </button>
+    </div>
+
+    <!-- Progress Box -->
+    <div id="progress-box" class="bg-[#1a1a1a] rounded-2xl p-6 mt-4 shadow-xl border border-[#2a2a2a]">
+      <p class="text-center font-bold text-white mb-4" id="progress-label">جارٍ المعالجة...</p>
+
+      <!-- Progress bar -->
+      <div class="w-full bg-[#2a2a2a] rounded-full h-2 mb-5">
+        <div id="progress-bar" class="progress-bar-inner h-2 rounded-full" style="width:0%"></div>
+      </div>
+
+      <!-- Steps -->
+      <div class="flex justify-between items-center gap-1">
+        <div class="flex flex-col items-center gap-1 flex-1" data-step="downloading">
+          <div class="step-dot" id="dot-downloading"></div>
+          <span class="text-[10px] text-gray-500 text-center leading-tight">تحميل</span>
+        </div>
+        <div class="h-px bg-[#333] flex-1 -mt-4"></div>
+        <div class="flex flex-col items-center gap-1 flex-1" data-step="extracting_audio">
+          <div class="step-dot" id="dot-extracting_audio"></div>
+          <span class="text-[10px] text-gray-500 text-center leading-tight">استخراج الصوت</span>
+        </div>
+        <div class="h-px bg-[#333] flex-1 -mt-4"></div>
+        <div class="flex flex-col items-center gap-1 flex-1" data-step="transcribed">
+          <div class="step-dot" id="dot-transcribed"></div>
+          <span class="text-[10px] text-gray-500 text-center leading-tight">النسخ</span>
+        </div>
+        <div class="h-px bg-[#333] flex-1 -mt-4"></div>
+        <div class="flex flex-col items-center gap-1 flex-1" data-step="translating">
+          <div class="step-dot" id="dot-translating"></div>
+          <span class="text-[10px] text-gray-500 text-center leading-tight">الترجمة</span>
+        </div>
+        <div class="h-px bg-[#333] flex-1 -mt-4"></div>
+        <div class="flex flex-col items-center gap-1 flex-1" data-step="burning_captions">
+          <div class="step-dot" id="dot-burning_captions"></div>
+          <span class="text-[10px] text-gray-500 text-center leading-tight">حرق الترجمة</span>
+        </div>
+        <div class="h-px bg-[#333] flex-1 -mt-4"></div>
+        <div class="flex flex-col items-center gap-1 flex-1" data-step="done">
+          <div class="step-dot" id="dot-done"></div>
+          <span class="text-[10px] text-gray-500 text-center leading-tight">جاهز!</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Result Box -->
+    <div id="result-box" class="bg-[#1a1a1a] rounded-2xl p-6 mt-4 shadow-xl border border-[#1f3d2a]">
+      <div class="text-center">
+        <div class="text-5xl mb-2">✅</div>
+        <p class="text-green-400 font-bold text-lg mb-1">الفيديو جاهز!</p>
+        <p class="text-gray-400 text-sm mb-5">تم إضافة الترجمة العربية بنجاح</p>
+        <a id="download-link" href="#" class="btn-download inline-block px-8 py-3 rounded-xl text-white font-bold text-base">
+          ⬇️ تحميل الفيديو
+        </a>
+        <button onclick="resetUI()" class="block mx-auto mt-4 text-gray-500 text-sm hover:text-gray-300 transition-colors">
+          معالجة فيديو آخر
+        </button>
+      </div>
+    </div>
+
+    <!-- Error Box -->
+    <div id="error-box" class="bg-[#1a1a1a] rounded-2xl p-6 mt-4 shadow-xl border border-[#3d1f1f]">
+      <div class="text-center">
+        <div class="text-4xl mb-2">⚠️</div>
+        <p class="text-red-400 font-bold mb-1">حدث خطأ</p>
+        <p id="error-msg" class="text-gray-400 text-sm mb-4"></p>
+        <button onclick="resetUI()" class="btn-primary px-6 py-2 rounded-xl text-white text-sm font-semibold">
+          حاول مرة أخرى
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Set to your Railway backend URL in production, e.g. 'https://your-app.up.railway.app'
+    const API_BASE = window.__API_BASE__ || '';
+
+    let selectedFile = null;
+    let currentTab = 'url';
+    let useEmoji = false;
+    const PRESETS = [16, 22, 34, 48];
+
+    // ── Tab ──
+    function switchTab(tab) {
+      currentTab = tab;
+      const isUrl = tab === 'url';
+      document.getElementById('url-panel').classList.toggle('hidden', !isUrl);
+      document.getElementById('file-panel').classList.toggle('hidden', isUrl);
+      document.getElementById('tab-url').className = `flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${isUrl ? 'bg-[#6c63ff] text-white' : 'bg-[#252525] text-gray-400 hover:bg-[#2f2f2f]'}`;
+      document.getElementById('tab-file').className = `flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${!isUrl ? 'bg-[#6c63ff] text-white' : 'bg-[#252525] text-gray-400 hover:bg-[#2f2f2f]'}`;
+    }
+
+    // ── File drop ──
+    function onDragOver(e) {
+      e.preventDefault();
+      document.getElementById('drop-zone').classList.add('drag-over');
+    }
+    function onDragLeave() {
+      document.getElementById('drop-zone').classList.remove('drag-over');
+    }
+    function onDrop(e) {
+      e.preventDefault();
+      document.getElementById('drop-zone').classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f) setFile(f);
+    }
+    function onFileSelect(e) {
+      const f = e.target.files[0];
+      if (f) setFile(f);
+    }
+    function setFile(f) {
+      selectedFile = f;
+      const name = document.getElementById('file-name');
+      name.textContent = '✅ ' + f.name;
+      name.classList.remove('hidden');
+    }
+
+    // ── Font size ──
+    function onSliderChange(val) {
+      val = parseInt(val);
+      document.getElementById('font-size-val').textContent = val;
+      highlightPreset(val);
+    }
+
+    function setFontPreset(size) {
+      document.getElementById('font-size-slider').value = size;
+      document.getElementById('font-size-val').textContent = size;
+      highlightPreset(size);
+    }
+
+    function highlightPreset(size) {
+      document.querySelectorAll('.preset-chip').forEach((btn, i) => {
+        const active = PRESETS[i] === size;
+        btn.className = `preset-chip py-1.5 rounded-lg text-xs font-bold transition-colors ${active ? 'bg-[#6c63ff] text-white' : 'bg-[#252525] text-gray-400 hover:bg-[#333]'}`;
+      });
+    }
+
+    // ── Emoji toggle ──
+    function setEmoji(val) {
+      useEmoji = val;
+      document.getElementById('emoji-yes').classList.toggle('active', val);
+      document.getElementById('emoji-no').classList.toggle('active', !val);
+    }
+
+    // ── Progress ──
+    const STEP_PROGRESS = {
+      starting: 5, uploading: 8, downloading: 15,
+      extracting_audio: 30, transcribed: 55,
+      translating: 70, building_srt: 80,
+      burning_captions: 90, done: 100,
+    };
+    const STEP_LABELS = {
+      starting: 'جارٍ البدء...', uploading: 'جارٍ الرفع...',
+      downloading: 'جارٍ التحميل...', extracting_audio: 'استخراج الصوت...',
+      transcribed: 'جارٍ النسخ...', translating: 'الترجمة إلى العربية...',
+      building_srt: 'بناء ملف الترجمة...', burning_captions: 'حرق الترجمة في الفيديو...',
+      done: 'اكتمل!',
+    };
+
+    function setProgress(status) {
+      const pct = STEP_PROGRESS[status] || 0;
+      document.getElementById('progress-bar').style.width = pct + '%';
+      document.getElementById('progress-label').textContent = STEP_LABELS[status] || status;
+
+      const stepOrder = ['downloading', 'extracting_audio', 'transcribed', 'translating', 'burning_captions', 'done'];
+      const currentIdx = stepOrder.indexOf(status === 'uploading' ? 'downloading' : status);
+      stepOrder.forEach((step, i) => {
+        const dot = document.getElementById('dot-' + step);
+        if (!dot) return;
+        dot.className = 'step-dot' + (i < currentIdx ? ' done' : i === currentIdx ? ' active' : '');
+      });
+    }
+
+    // ── Submit ──
+    async function startProcess() {
+      const url = document.getElementById('url-input').value.trim();
+      if (currentTab === 'url' && !url) { alert('الرجاء إدخال رابط الفيديو'); return; }
+      if (currentTab === 'file' && !selectedFile) { alert('الرجاء اختيار ملف فيديو'); return; }
+
+      document.getElementById('submit-btn').disabled = true;
+      document.getElementById('input-card').style.opacity = '0.5';
+      document.getElementById('progress-box').style.display = 'block';
+      document.getElementById('error-box').style.display = 'none';
+      document.getElementById('result-box').style.display = 'none';
+      setProgress('starting');
+
+      const formData = new FormData();
+      formData.append('font_size', document.getElementById('font-size-slider').value);
+      formData.append('use_emoji', useEmoji ? '1' : '0');
+
+      if (currentTab === 'url') {
+        formData.append('url', url);
+      } else {
+        formData.append('file', selectedFile);
+      }
+
+      let jobId;
+      try {
+        const res = await fetch(API_BASE + '/process', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Server error');
+        jobId = data.job_id;
+      } catch (e) {
+        showError(e.message);
+        return;
+      }
+
+      const evtSource = new EventSource(API_BASE + `/progress/${jobId}`);
+      evtSource.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.status === 'error') {
+          evtSource.close();
+          showError(data.error || 'حدث خطأ غير متوقع');
+          return;
+        }
+        setProgress(data.status);
+        if (data.status === 'done') {
+          evtSource.close();
+          showResult(data.output);
+        }
+      };
+      evtSource.onerror = () => {
+        evtSource.close();
+        showError('انقطع الاتصال بالخادم');
+      };
+    }
+
+    function showResult(filename) {
+      document.getElementById('progress-box').style.display = 'none';
+      document.getElementById('result-box').style.display = 'block';
+      document.getElementById('download-link').href = API_BASE + `/download/${filename}`;
+    }
+
+    function showError(msg) {
+      document.getElementById('progress-box').style.display = 'none';
+      document.getElementById('error-box').style.display = 'block';
+      document.getElementById('error-msg').textContent = msg;
+      document.getElementById('submit-btn').disabled = false;
+      document.getElementById('input-card').style.opacity = '1';
+    }
+
+    function resetUI() {
+      document.getElementById('result-box').style.display = 'none';
+      document.getElementById('error-box').style.display = 'none';
+      document.getElementById('progress-box').style.display = 'none';
+      document.getElementById('submit-btn').disabled = false;
+      document.getElementById('input-card').style.opacity = '1';
+      document.getElementById('url-input').value = '';
+      document.getElementById('file-name').classList.add('hidden');
+      document.getElementById('file-input').value = '';
+      selectedFile = null;
+    }
+  </script>
+</body>
+</html>
