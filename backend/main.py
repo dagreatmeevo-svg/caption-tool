@@ -69,7 +69,7 @@ def _run_pipeline(job_id: str, video_path: str, font_size: int = 22, use_emoji: 
 
         step("burning_captions")
         output_path = str(OUTPUT_DIR / f"{job_id}_captioned.mp4")
-        burn_subtitles(video_path, srt_path, output_path, font_size=font_size)
+        burn_subtitles(video_path, srt_path, output_path, font_size=font_size, segments=arabic_segments if use_emoji else [])
 
         # Cleanup temp files
         for f in [video_path, srt_path]:
