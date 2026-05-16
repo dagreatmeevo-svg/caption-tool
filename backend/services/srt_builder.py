@@ -1,46 +1,54 @@
 import re
+import logging
 
-# Comprehensive emoji strip — covers all major ranges + variation selectors + ZWJ
-_EMOJI_RE = re.compile(
-    '['
-    '\U0001F300-\U0001F9FF'   # emoticons, symbols, pictographs
-    '\U0001FA00-\U0001FAFF'   # symbols & pictographs extended-A
-    '\U0001F1E0-\U0001F1FF'   # regional indicator letters (flags)
-    '\U00002600-\U000027BF'   # misc symbols, dingbats
-    '\U00002B00-\U00002BFF'   # misc symbols & arrows (⭐ etc.)
-    '\U00002300-\U000023FF'   # misc technical
-    '\U00002500-\U000025FF'   # box drawing / geometric shapes
-    '\U0000FE00-\U0000FE0F'   # variation selectors (FE0F is the key one)
-    '\U0001F004'
-    '\U0001F0CF'
-    '\U0000200D'              # zero-width joiner (used in ZWJ sequences)
-    '\U000020E3'              # combining enclosing keycap
-    ']+'
-)
+log = logging.getLogger(__name__)
 
 
-def _strip_emojis(text: str) -> str:
-    return _EMOJI_RE.sub('', text).strip()
+def _safe_for_cairo(text: str) -> str:
+    """
+    Keep only codepoints that Cairo-Regular.ttf can render.
+    Everything else (emoji, symbols, variation selectors, ZWJ…) is dropped.
+    Allowlist is more reliable than a blocklist because Unicode adds new
+    emoji ranges with every release.
+    """
+    out = []
+    for ch in text:
+        cp = ord(ch)
+        if (
+            0x0020 <= cp <= 0x007E    # Basic ASCII (space → ~)
+            or 0x00A0 <= cp <= 0x024F  # Latin-1 + Latin Extended-A/B
+            or 0x0600 <= cp <= 0x06FF  # Arabic
+            or 0x0750 <= cp <= 0x077F  # Arabic Supplement
+            or 0xFB50 <= cp <= 0xFDFF  # Arabic Presentation Forms-A
+            or 0xFE70 <= cp <= 0xFEFF  # Arabic Presentation Forms-B
+        ):
+            out.append(ch)
+    cleaned = ''.join(out).strip()
+    return cleaned
 
 
 def _fmt_time(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
+    h  = int(seconds // 3600)
+    m  = int((seconds % 3600) // 60)
+    s  = int(seconds % 60)
     ms = int(round((seconds - int(seconds)) * 1000))
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def build_srt(segments: list[dict]) -> str:
     lines = []
-    for i, seg in enumerate(segments, start=1):
-        start = _fmt_time(seg["start"])
-        end   = _fmt_time(seg["end"])
-        text  = _strip_emojis(seg["text"])
+    srt_idx = 1
+    for seg in segments:
+        text = _safe_for_cairo(seg["text"])
         if not text:
             continue
-        lines.append(f"{i}\n{start} --> {end}\n{text}\n")
-    return "\n".join(lines)
+        start = _fmt_time(seg["start"])
+        end   = _fmt_time(seg["end"])
+        lines.append(f"{srt_idx}\n{start} --> {end}\n{text}\n")
+        srt_idx += 1
+    content = "\n".join(lines)
+    log.debug("SRT content:\n%s", content[:500])
+    return content
 
 
 def write_srt(segments: list[dict], path: str):

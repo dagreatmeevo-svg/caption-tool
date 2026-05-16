@@ -67,7 +67,8 @@ def burn_subtitles(
     segments:   list[dict] | None = None,   # original segments (with emojis) for overlay
 ):
     srt_esc   = srt_path.replace('\\', '/').replace(':', '\\:')
-    fonts_dir = _FONT_DIR.replace('\\', '/').replace(':', '\\:')
+    # fontsdir must be the DIRECTORY containing the font file, not the file itself
+    fonts_dir = os.path.normpath(_FONT_DIR).replace('\\', '/').replace(':', '\\:')
 
     style = (
         f'FontName=Cairo,'
