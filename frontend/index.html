@@ -199,6 +199,24 @@
       <!-- Divider -->
       <div class="border-t border-[#2a2a2a] my-5"></div>
 
+      <!-- Source Language -->
+      <div>
+        <label for="source-language" class="block text-sm font-semibold text-gray-200 mb-3">
+          &#1604;&#1594;&#1577; &#1575;&#1604;&#1601;&#1610;&#1583;&#1610;&#1608;
+        </label>
+        <select
+          id="source-language"
+          class="w-full bg-[#252525] border border-[#333] rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-[#6c63ff] transition-colors"
+        >
+          <option value="auto">Auto</option>
+          <option value="ar">&#1575;&#1604;&#1593;&#1585;&#1576;&#1610;&#1577;</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <!-- Divider -->
+      <div class="border-t border-[#2a2a2a] my-5"></div>
+
       <!-- Emoji Toggle -->
       <div>
         <p class="text-sm font-semibold text-gray-200 mb-3">✨ إضافة إيموجي للترجمة؟</p>
@@ -417,6 +435,7 @@
       const formData = new FormData();
       formData.append('font_size', document.getElementById('font-size-slider').value);
       formData.append('use_emoji', useEmoji ? '1' : '0');
+      formData.append('source_language', document.getElementById('source-language').value);
 
       if (currentTab === 'url') {
         formData.append('url', url);

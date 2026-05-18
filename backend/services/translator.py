@@ -1,11 +1,11 @@
 import json
 from openai import OpenAI
 
-BATCH_SIZE = 80  # segments per DeepSeek call
+BATCH_SIZE = 80
 
 
 def _translate_batch(client: OpenAI, segments: list[dict], use_emoji: bool = False) -> list[dict]:
-    """Translate a batch of segments to Arabic via DeepSeek. Returns segments with Arabic text."""
+    """Translate a batch of segments to Arabic via DeepSeek."""
     payload = [{"id": i, "text": s["text"]} for i, s in enumerate(segments)]
 
     emoji_instruction = (
@@ -22,7 +22,9 @@ def _translate_batch(client: OpenAI, segments: list[dict], use_emoji: bool = Fal
                 "content": (
                     "You are a professional Arabic translator for video subtitles. "
                     "Translate the given JSON array of subtitle segments to Arabic. "
-                    "Keep translations natural and colloquial — this is for video captions."
+                    "Preserve the meaning closely and do not paraphrase unnecessarily. "
+                    "Use natural Iraqi/Gulf-friendly Modern Standard Arabic. "
+                    "Keep each segment concise, ideally no more than 8 words."
                     + emoji_instruction +
                     " Preserve the exact JSON structure with 'id' and 'text' fields. "
                     "Return ONLY the JSON array, no explanation, no markdown."
@@ -36,7 +38,6 @@ def _translate_batch(client: OpenAI, segments: list[dict], use_emoji: bool = Fal
     )
 
     raw = response.choices[0].message.content.strip()
-    # Strip markdown code fences if DeepSeek wraps in them
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -44,7 +45,6 @@ def _translate_batch(client: OpenAI, segments: list[dict], use_emoji: bool = Fal
     raw = raw.strip()
 
     translated = json.loads(raw)
-    # Map back by id
     id_to_text = {item["id"]: item["text"] for item in translated}
 
     result = []
@@ -52,7 +52,7 @@ def _translate_batch(client: OpenAI, segments: list[dict], use_emoji: bool = Fal
         result.append({
             "start": seg["start"],
             "end": seg["end"],
-            "text": id_to_text.get(i, seg["text"]),  # fallback to original if missing
+            "text": id_to_text.get(i, seg["text"]),
         })
     return result
 

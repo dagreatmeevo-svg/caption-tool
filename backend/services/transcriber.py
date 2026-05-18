@@ -20,14 +20,24 @@ def _extract_audio(video_path: str, audio_path: str):
     )
 
 
-def _transcribe_file(client: Groq, path: str, offset_seconds: float = 0.0) -> list[dict]:
+def _transcribe_file(
+    client: Groq,
+    path: str,
+    offset_seconds: float = 0.0,
+    language: str | None = None,
+) -> list[dict]:
     """Send one audio file to Groq Whisper and return segments with offset applied."""
+    kwargs = {}
+    if language:
+        kwargs["language"] = language
+
     with open(path, "rb") as f:
         result = client.audio.transcriptions.create(
             file=f,
             model="whisper-large-v3",
             response_format="verbose_json",
             timestamp_granularities=["segment"],
+            **kwargs,
         )
 
     segments = []
@@ -82,7 +92,7 @@ def _split_audio(audio_path: str, chunk_dir: str) -> list[tuple[str, float]]:
     return chunks
 
 
-def transcribe(video_path: str, api_key: str) -> list[dict]:
+def transcribe(video_path: str, api_key: str, language: str | None = None) -> list[dict]:
     """
     Full pipeline: extract audio → split if needed → transcribe via Groq.
     Returns list of {start, end, text} segments.
@@ -96,7 +106,7 @@ def transcribe(video_path: str, api_key: str) -> list[dict]:
         chunks = _split_audio(audio_path, chunk_dir)
         all_segments = []
         for chunk_path, offset in chunks:
-            segs = _transcribe_file(client, chunk_path, offset_seconds=offset)
+            segs = _transcribe_file(client, chunk_path, offset_seconds=offset, language=language)
             all_segments.extend(segs)
 
     # Clean up audio file

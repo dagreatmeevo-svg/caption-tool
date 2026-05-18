@@ -1,4 +1,5 @@
 import os
+import logging
 import re
 import subprocess
 import urllib.request
@@ -7,7 +8,11 @@ from pathlib import Path
 
 _DIR      = os.path.dirname(__file__)
 _FONT_DIR = os.path.join(_DIR, "..", "fonts")
+_FONT_FILE = os.path.join(_FONT_DIR, "Cairo-Regular.ttf")
+_WINDOWS_FONT_DIR = r"C:\Windows\Fonts"
+_LINUX_NOTO_NASKH = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"
 _EMOJI_CACHE = os.path.join(_DIR, "..", "emoji_cache")
+log = logging.getLogger(__name__)
 
 # Same comprehensive regex as srt_builder — must stay in sync
 _EMOJI_RE = re.compile(
@@ -59,6 +64,42 @@ def _twemoji_png(char: str) -> str | None:
     return dest if os.path.exists(dest) else None
 
 
+def _ffmpeg_filter_path(path: str) -> str:
+    return os.path.normpath(path).replace('\\', '/').replace(':', '\\:')
+
+
+def _codepoint_dump(text: str) -> str:
+    rows = []
+    for idx, ch in enumerate(text):
+        if ord(ch) <= 0x7F or ch in "\r\n":
+            continue
+        rows.append(f"{idx}: U+{ord(ch):04X} {ch!r}")
+    return "\n".join(rows) if rows else "(no non-ASCII codepoints)"
+
+
+def _caption_font() -> tuple[str, str | None]:
+    configured = os.getenv("CAPTION_FONT_NAME", "").strip()
+    if configured:
+        configured_dir = os.getenv("CAPTION_FONT_DIR", "").strip()
+        return configured, configured_dir or None
+
+    if os.name == "nt" and os.path.exists(os.path.join(_WINDOWS_FONT_DIR, "tahoma.ttf")):
+        return "Tahoma", None
+
+    if os.path.exists(_LINUX_NOTO_NASKH):
+        return "Noto Naskh Arabic", None
+
+    return "Cairo", _FONT_DIR
+
+
+def _subtitles_filter(srt_esc: str, fonts_dir: str | None, style: str) -> str:
+    parts = [f"subtitles='{srt_esc}'"]
+    if fonts_dir:
+        parts.append(f"fontsdir='{_ffmpeg_filter_path(fonts_dir)}'")
+    parts.append(f"force_style='{style}'")
+    return ":".join(parts)
+
+
 def burn_subtitles(
     video_path: str,
     srt_path:   str,
@@ -66,12 +107,29 @@ def burn_subtitles(
     font_size:  int = 22,
     segments:   list[dict] | None = None,   # original segments (with emojis) for overlay
 ):
-    srt_esc   = srt_path.replace('\\', '/').replace(':', '\\:')
-    # fontsdir must be the DIRECTORY containing the font file, not the file itself
-    fonts_dir = os.path.normpath(_FONT_DIR).replace('\\', '/').replace(':', '\\:')
+    srt_esc = _ffmpeg_filter_path(srt_path)
+    fontsdir_mode = os.getenv("CAPTION_FONTSDIR_MODE", "dir").lower()
+    font_name, font_dir = _caption_font()
+    if font_name == "Cairo":
+        font_dir = _FONT_FILE if fontsdir_mode == "file" else _FONT_DIR
+    fonts_source = font_dir or "(system font provider)"
+    fonts_dir = _ffmpeg_filter_path(font_dir) if font_dir else None
+
+    srt_content = Path(srt_path).read_text(encoding='utf-8')
+    log.info("captioner SRT path=%s bytes=%s", srt_path, Path(srt_path).stat().st_size)
+    log.info("captioner SRT content right before ffmpeg:\n%s", srt_content)
+    log.info("captioner SRT non-ASCII codepoints:\n%s", _codepoint_dump(srt_content))
+    log.info(
+        "captioner font config name=%s mode=%s source=%s exists=%s escaped=%s",
+        font_name,
+        fontsdir_mode,
+        fonts_source,
+        os.path.exists(font_dir) if font_dir else True,
+        fonts_dir,
+    )
 
     style = (
-        f'FontName=Cairo,'
+        f'FontName={font_name},'
         f'FontSize={font_size},'
         f'Alignment=2,'
         f'MarginV=35,'
@@ -81,6 +139,7 @@ def burn_subtitles(
         f'Outline=2,'
         f'Shadow=0'
     )
+    subtitle_filter = _subtitles_filter(srt_esc, font_dir, style)
 
     # Build emoji overlay map from original segments (SRT is already clean)
     # Group by (img_path, slot) → list of (start, end) intervals
@@ -103,8 +162,8 @@ def burn_subtitles(
     if not slot_intervals:
         # Fast path — plain subtitle burn, no emoji overlay
         cmd = [
-            'ffmpeg', '-y', '-i', video_path,
-            '-vf', f"subtitles='{srt_esc}':fontsdir='{fonts_dir}':force_style='{style}'",
+            'ffmpeg', '-y', '-loglevel', 'verbose', '-i', video_path,
+            '-vf', subtitle_filter,
             '-c:v', 'libx264', '-crf', '18', '-preset', 'fast', '-c:a', 'copy',
             output_path,
         ]
@@ -116,7 +175,7 @@ def burn_subtitles(
             inputs += ['-i', img]
 
         parts = [
-            f"[0:v]subtitles='{srt_esc}':fontsdir='{fonts_dir}':force_style='{style}'[v0]"
+            f"[0:v]{subtitle_filter}[v0]"
         ]
         cur = 'v0'
         for i, ((img, slot), intervals) in enumerate(unique):
@@ -130,16 +189,23 @@ def burn_subtitles(
             )
             cur = nxt
 
-        Path(filter_file).write_text(';'.join(parts), encoding='utf-8')
+        filter_content = ';'.join(parts)
+        Path(filter_file).write_text(filter_content, encoding='utf-8')
+        log.info("ffmpeg filter_complex_script %s:\n%s", filter_file, filter_content)
 
-        cmd = ['ffmpeg', '-y'] + inputs + [
+        cmd = ['ffmpeg', '-y', '-loglevel', 'verbose'] + inputs + [
             '-filter_complex_script', filter_file,
             '-map', f'[{cur}]', '-map', '0:a?',
             '-c:v', 'libx264', '-crf', '18', '-preset', 'fast', '-c:a', 'copy',
             output_path,
         ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    log.info("ffmpeg command: %s", subprocess.list2cmdline(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    log.info("ffmpeg returncode=%s", result.returncode)
+    log.info("ffmpeg stderr:\n%s", result.stderr)
+    if result.stdout:
+        log.info("ffmpeg stdout:\n%s", result.stdout)
 
     if os.path.exists(filter_file):
         os.remove(filter_file)

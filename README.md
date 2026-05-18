@@ -1,61 +1,70 @@
 # Arabic Caption Tool
 
-Upload a video or paste a TikTok/YouTube/Instagram link — get back the same video with Arabic captions burned in.
+Upload a video or paste a TikTok, YouTube, or Instagram link and get back an MP4 with Arabic captions burned in.
 
-## Prerequisites
+## Stack
 
-1. **Python 3.10+** — check with `python --version`
-2. **FFmpeg** — download from https://ffmpeg.org/download.html
-   - Windows: extract, add the `bin/` folder to your PATH
-   - Test: `ffmpeg -version` should work in terminal
-3. **Groq API key** (free) — https://console.groq.com
-4. **DeepSeek API key** — https://platform.deepseek.com
+- FastAPI backend
+- Static HTML/Tailwind frontend served by FastAPI
+- Groq Whisper transcription
+- DeepSeek Arabic translation
+- FFmpeg/libass subtitle burn
 
-## Setup
+## Local Setup
+
+1. Install Python 3.10+.
+2. Install FFmpeg and make sure `ffmpeg -version` works.
+3. Create `backend/.env`:
+
+```env
+GROQ_API_KEY=your_groq_key
+DEEPSEEK_API_KEY=your_deepseek_key
+```
+
+4. Install Python dependencies:
 
 ```bash
-cd caption-tool/backend
-
-# Copy and fill in your API keys
-copy .env.example .env
-
-# Install dependencies
+cd backend
 pip install -r requirements.txt
 ```
 
-Edit `.env`:
-```
-GROQ_API_KEY=gsk_your_key_here
-DEEPSEEK_API_KEY=sk-your_key_here
-```
-
-## Run
+5. Run the app:
 
 ```bash
-cd caption-tool/backend
-uvicorn main:app --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Open your browser at: **http://localhost:8000**
+Open `http://localhost:8000`.
 
-## Usage
+## Deployment
 
-1. Paste a TikTok / YouTube / Instagram link, OR drag-and-drop a video file
-2. Click **أضف الترجمة العربية**
-3. Watch the progress bar — takes 30–90 seconds depending on video length
-4. Download your captioned video
+Railway is the best fit for this project because the app needs a long-running FastAPI server, upload/temp file handling, yt-dlp, and native FFmpeg.
 
-## How it works
+This repo includes:
 
+- `Dockerfile` - installs FFmpeg and Python dependencies.
+- `railway.json` - tells Railway to use the Dockerfile and health-check `/`.
+- `Procfile` - kept for platforms that use Procfile-style starts.
+
+### Railway
+
+1. Create a new Railway project from this GitHub repo.
+2. Set these environment variables:
+
+```env
+GROQ_API_KEY=your_groq_key
+DEEPSEEK_API_KEY=your_deepseek_key
+LOG_LEVEL=INFO
 ```
-video/link → yt-dlp downloads → FFmpeg extracts audio
-→ Groq Whisper transcribes → DeepSeek translates to Arabic
-→ FFmpeg burns Arabic captions into video → download
-```
+
+3. Deploy. Railway should build with the root `Dockerfile`.
+
+### Vercel
+
+Vercel is not the recommended primary deployment for this app because the backend needs FFmpeg and longer-running video jobs. The existing `vercel.json` can host the static frontend only, but the current simplest production setup is one Railway service serving both frontend and backend.
 
 ## Notes
 
-- Output files are auto-deleted after 24 hours
-- For videos longer than ~30 min, audio is split into chunks automatically
-- Cairo font is required for Arabic rendering — place `Cairo-Regular.ttf` in `backend/fonts/`
-  - Download from: https://fonts.google.com/specimen/Cairo
+- For Arabic source videos, choose `العربية` in the source-language picker so the app skips DeepSeek and preserves the original Arabic transcription.
+- On Windows, subtitle burning uses Tahoma for Arabic rendering. On Railway/Linux Docker, it uses Noto Naskh Arabic from the image. The bundled Cairo font remains a fallback.
+- Output files are auto-deleted after 24 hours.

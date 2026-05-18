@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import shutil
 import threading
@@ -13,6 +14,12 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+log = logging.getLogger(__name__)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
@@ -41,7 +48,13 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 jobs: dict[str, dict] = {}
 
 
-def _run_pipeline(job_id: str, video_path: str, font_size: int = 22, use_emoji: bool = False):
+def _run_pipeline(
+    job_id: str,
+    video_path: str,
+    font_size: int = 22,
+    use_emoji: bool = False,
+    source_language: str = "auto",
+):
     from services.downloader import download_video
     from services.transcriber import transcribe
     from services.translator import translate_to_arabic
@@ -53,23 +66,41 @@ def _run_pipeline(job_id: str, video_path: str, font_size: int = 22, use_emoji: 
         jobs[job_id]["status"] = msg
 
     try:
+        log.info(
+            "job %s: starting pipeline video=%s font_size=%s use_emoji=%s source_language=%s",
+            job_id,
+            video_path,
+            font_size,
+            use_emoji,
+            source_language,
+        )
         step("extracting_audio")
-        segments = transcribe(video_path, GROQ_API_KEY)
+        transcribe_language = None if source_language == "auto" else source_language
+        segments = transcribe(video_path, GROQ_API_KEY, language=transcribe_language)
 
         step("transcribed")
         if not segments:
             raise ValueError("No speech detected in video.")
 
-        step("translating")
-        arabic_segments = translate_to_arabic(segments, DEEPSEEK_API_KEY, use_emoji=use_emoji)
+        if source_language == "ar":
+            step("building_srt")
+            arabic_segments = segments
+        else:
+            step("translating")
+            arabic_segments = translate_to_arabic(segments, DEEPSEEK_API_KEY, use_emoji=use_emoji)
 
-        step("building_srt")
         srt_path = str(TEMP_DIR / f"{job_id}.srt")
         write_srt(arabic_segments, srt_path)
 
         step("burning_captions")
         output_path = str(OUTPUT_DIR / f"{job_id}_captioned.mp4")
-        burn_subtitles(video_path, srt_path, output_path, font_size=font_size, segments=arabic_segments if use_emoji else [])
+        burn_subtitles(
+            video_path,
+            srt_path,
+            output_path,
+            font_size=font_size,
+            segments=arabic_segments if use_emoji and source_language != "ar" else [],
+        )
 
         # Cleanup temp files
         for f in [video_path, srt_path]:
@@ -78,6 +109,7 @@ def _run_pipeline(job_id: str, video_path: str, font_size: int = 22, use_emoji: 
 
         jobs[job_id]["output"] = f"{job_id}_captioned.mp4"
         jobs[job_id]["status"] = "done"
+        log.info("job %s: done output=%s", job_id, output_path)
 
         # Auto-delete output after 24 hours
         def _cleanup():
@@ -88,6 +120,7 @@ def _run_pipeline(job_id: str, video_path: str, font_size: int = 22, use_emoji: 
         threading.Thread(target=_cleanup, daemon=True).start()
 
     except Exception as e:
+        log.exception("job %s: pipeline failed", job_id)
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(e)
         # Clean up on error
@@ -107,9 +140,13 @@ async def process(
     file: UploadFile = File(default=None),
     font_size: int = Form(default=22),
     use_emoji: bool = Form(default=False),
+    source_language: str = Form(default="auto"),
 ):
-    if not GROQ_API_KEY or not DEEPSEEK_API_KEY:
-        raise HTTPException(status_code=500, detail="API keys not configured in .env")
+    source_language = source_language if source_language in {"auto", "ar", "en"} else "auto"
+    if not GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured in .env")
+    if source_language != "ar" and not DEEPSEEK_API_KEY:
+        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY is not configured in .env")
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
@@ -131,7 +168,7 @@ async def process(
                 downloaded = download_video(url.strip(), video_path.replace(".mp4", ""))
                 if os.path.exists(downloaded) and downloaded != video_path:
                     shutil.move(downloaded, video_path)
-                _run_pipeline(job_id, video_path, font_size=font_size, use_emoji=use_emoji)
+                _run_pipeline(job_id, video_path, font_size=font_size, use_emoji=use_emoji, source_language=source_language)
             except Exception as e:
                 jobs[job_id]["status"] = "error"
                 jobs[job_id]["error"] = str(e)
@@ -141,7 +178,7 @@ async def process(
     else:
         raise HTTPException(status_code=400, detail="Provide a URL or upload a file.")
 
-    threading.Thread(target=_run_pipeline, args=(job_id, video_path, font_size, use_emoji), daemon=True).start()
+    threading.Thread(target=_run_pipeline, args=(job_id, video_path, font_size, use_emoji, source_language), daemon=True).start()
     return {"job_id": job_id}
 
 
