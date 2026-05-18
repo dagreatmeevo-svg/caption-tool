@@ -59,6 +59,14 @@ LOG_LEVEL=INFO
 
 3. Deploy. Railway should build with the root `Dockerfile`.
 
+If you previously set a Railway dashboard start command, remove it. The Docker image now starts with `python start.py`. If Railway requires a start command for any reason, use exactly:
+
+```bash
+python start.py
+```
+
+Do not use `cd backend && ...` as a Railway start command.
+
 ### Vercel
 
 Vercel is not the recommended primary deployment for this app because the backend needs FFmpeg and longer-running video jobs. The existing `vercel.json` can host the static frontend only, but the current simplest production setup is one Railway service serving both frontend and backend.

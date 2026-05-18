@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 COPY backend /app/backend
 COPY frontend /app/frontend
+COPY app.py start.py /app/
 
-WORKDIR /app/backend
+WORKDIR /app
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["python", "start.py"]
