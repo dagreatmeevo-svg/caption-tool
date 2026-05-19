@@ -100,6 +100,13 @@ def _subtitles_filter(srt_esc: str, fonts_dir: str | None, style: str) -> str:
     return ":".join(parts)
 
 
+def _video_filter(subtitle_filter: str, max_height: int | None) -> str:
+    if not max_height:
+        return subtitle_filter
+    scale_filter = f"scale='if(gt(ih,{max_height}),-2,iw)':'min(ih,{max_height})'"
+    return f"{subtitle_filter},{scale_filter}"
+
+
 def _stderr_tail(path: str, limit: int = 12000) -> str:
     try:
         with open(path, "rb") as f:
@@ -125,6 +132,7 @@ def burn_subtitles(
     segments:   list[dict] | None = None,   # original segments (with emojis) for overlay
     crf: int = 18,
     preset: str = "fast",
+    max_height: int | None = None,
 ):
     srt_esc = _ffmpeg_filter_path(srt_path)
     fontsdir_mode = os.getenv("CAPTION_FONTSDIR_MODE", "dir").lower()
@@ -159,6 +167,7 @@ def burn_subtitles(
         f'Shadow=0'
     )
     subtitle_filter = _subtitles_filter(srt_esc, font_dir, style)
+    video_filter = _video_filter(subtitle_filter, max_height)
 
     # Build emoji overlay map from original segments (SRT is already clean)
     # Group by (img_path, slot) → list of (start, end) intervals
@@ -186,7 +195,7 @@ def burn_subtitles(
         # Fast path — plain subtitle burn, no emoji overlay
         cmd = [
             'ffmpeg', '-y', '-nostdin', '-loglevel', ffmpeg_loglevel, '-i', video_path,
-            '-vf', subtitle_filter,
+            '-vf', video_filter,
             '-c:v', 'libx264', '-crf', str(crf), '-preset', preset,
             '-threads', video_threads, '-pix_fmt', 'yuv420p',
             *audio_args, '-movflags', '+faststart',
@@ -199,8 +208,9 @@ def burn_subtitles(
         for (img, _slot), _ivs in unique:
             inputs += ['-i', img]
 
+        initial_filter = video_filter if max_height else subtitle_filter
         parts = [
-            f"[0:v]{subtitle_filter}[v0]"
+            f"[0:v]{initial_filter}[v0]"
         ]
         cur = 'v0'
         for i, ((img, slot), intervals) in enumerate(unique):

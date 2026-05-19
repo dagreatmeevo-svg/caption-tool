@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_DEFAULT_QUALITY = int(os.getenv("TELEGRAM_DEFAULT_QUALITY", "720"))
 
 BASE_DIR = Path(__file__).parent
 TEMP_DIR = BASE_DIR / "temp"
@@ -49,6 +50,7 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 # job_id → {"status": str, "steps": [str], "error": str|None, "output": str|None}
 jobs: dict[str, dict] = {}
+telegram_quality_by_chat: dict[int | str, int] = {}
 
 
 def _valid_source_language(source_language: str) -> str:
@@ -70,6 +72,7 @@ def _run_pipeline(
     source_language: str = "auto",
     video_crf: int = 18,
     video_preset: str = "fast",
+    max_height: int | None = None,
     on_step: Callable[[str], None] | None = None,
 ):
     from services.downloader import download_video
@@ -128,6 +131,7 @@ def _run_pipeline(
             segments=arabic_segments if use_emoji and source_language != "ar" else [],
             crf=video_crf,
             preset=video_preset,
+            max_height=max_height,
         )
 
         # Cleanup temp files
@@ -177,12 +181,29 @@ def _looks_like_url(text: str) -> bool:
     return text.startswith(("http://", "https://"))
 
 
+def _telegram_quality(chat_id: int | str) -> int:
+    return telegram_quality_by_chat.get(chat_id, TELEGRAM_DEFAULT_QUALITY)
+
+
+def _set_telegram_quality(chat_id: int | str, text: str) -> str | None:
+    parts = text.split()
+    if len(parts) == 1:
+        return f"Current quality: {_telegram_quality(chat_id)}p. Use /quality 720 or /quality 1080."
+
+    if parts[1] not in {"720", "1080"}:
+        return "Invalid quality. Use /quality 720 or /quality 1080."
+
+    telegram_quality_by_chat[chat_id] = int(parts[1])
+    return f"Quality set to {parts[1]}p."
+
+
 def _run_telegram_job(
     chat_id: int | str,
     file_id: str | None = None,
     url: str = "",
     source_language: str = "en",
     font_size: int = 14,
+    max_height: int = 720,
 ):
     from services.downloader import download_video
     from services.telegram_bot import TelegramBot
@@ -240,6 +261,7 @@ def _run_telegram_job(
             font_size=font_size,
             use_emoji=False,
             source_language=source_language,
+            max_height=max_height,
             on_step=notify_step,
         )
 
@@ -252,7 +274,7 @@ def _run_telegram_job(
             raise RuntimeError("Caption processing finished without an output file.")
 
         output_path = OUTPUT_DIR / output_name
-        set_status("Uploading full-quality MP4 to Telegram...")
+        set_status(f"Uploading {max_height}p MP4 to Telegram...")
         try:
             bot.send_document(chat_id, str(output_path), caption="Done.")
         except Exception:
@@ -343,8 +365,15 @@ async def telegram_webhook(request: Request):
         TelegramBot(TELEGRAM_BOT_TOKEN).send_message(
             chat_id,
             "Send me a video file or a TikTok/YouTube/Instagram URL. "
-            "I will translate English audio to Arabic captions with font size 14 and no emoji.",
+            "I will translate English audio to Arabic captions with font size 14 and no emoji. "
+            "Use /quality 720 or /quality 1080. Default is 720p.",
         )
+        return {"ok": True}
+
+    if text.startswith("/quality"):
+        from services.telegram_bot import TelegramBot
+
+        TelegramBot(TELEGRAM_BOT_TOKEN).send_message(chat_id, _set_telegram_quality(chat_id, text))
         return {"ok": True}
 
     if not file_id and not _looks_like_url(text):
@@ -362,6 +391,7 @@ async def telegram_webhook(request: Request):
             "chat_id": chat_id,
             "file_id": file_id,
             "url": text if _looks_like_url(text) else "",
+            "max_height": _telegram_quality(chat_id),
         },
         daemon=True,
     ).start()

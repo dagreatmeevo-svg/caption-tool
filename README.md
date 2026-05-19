@@ -20,6 +20,7 @@ Upload a video or paste a TikTok, YouTube, or Instagram link and get back an MP4
 GROQ_API_KEY=your_groq_key
 DEEPSEEK_API_KEY=your_deepseek_key
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_DEFAULT_QUALITY=720
 ```
 
 4. Install Python dependencies:
@@ -57,6 +58,7 @@ GROQ_API_KEY=your_groq_key
 DEEPSEEK_API_KEY=your_deepseek_key
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 LOG_LEVEL=INFO
+TELEGRAM_DEFAULT_QUALITY=720
 ```
 
 3. Deploy. Railway should build with the root `Dockerfile`.
@@ -84,7 +86,7 @@ The bot accepts:
 - A video file sent directly to the bot.
 - A TikTok, YouTube, or Instagram URL sent as text.
 
-Telegram jobs default to English source audio, Arabic captions, font size 14, emoji off, full-quality video encoding, and document-first delivery.
+Telegram jobs default to English source audio, Arabic captions, font size 14, emoji off, and document-first delivery. Telegram output defaults to 720p to avoid Bot API upload limits. Use `/quality 720` or `/quality 1080` in the bot to choose per chat.
 
 ### Vercel
 
