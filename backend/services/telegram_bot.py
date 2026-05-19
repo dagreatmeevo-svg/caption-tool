@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 import requests
+from requests import HTTPError
 
 log = logging.getLogger(__name__)
 
@@ -12,10 +13,25 @@ class TelegramBot:
         self.api_base = f"https://api.telegram.org/bot{token}"
         self.file_base = f"https://api.telegram.org/file/bot{token}"
 
+    def _raise_response_error(self, method: str, response: requests.Response):
+        try:
+            data = response.json()
+            description = data.get("description") or response.text
+        except ValueError:
+            description = response.text
+
+        if response.status_code == 413:
+            description = "Request entity too large. The file is bigger than Telegram Bot API accepts."
+
+        raise RuntimeError(f"Telegram {method} failed: HTTP {response.status_code}: {description}")
+
     def _post(self, method: str, **kwargs):
         timeout = kwargs.pop("timeout", 60)
         response = requests.post(f"{self.api_base}/{method}", timeout=timeout, **kwargs)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except HTTPError:
+            self._raise_response_error(method, response)
         data = response.json()
         if not data.get("ok"):
             raise RuntimeError(f"Telegram {method} failed: {data}")
@@ -23,7 +39,10 @@ class TelegramBot:
 
     def _get(self, method: str, **kwargs):
         response = requests.get(f"{self.api_base}/{method}", timeout=60, **kwargs)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except HTTPError:
+            self._raise_response_error(method, response)
         data = response.json()
         if not data.get("ok"):
             raise RuntimeError(f"Telegram {method} failed: {data}")

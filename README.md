@@ -22,6 +22,7 @@ DEEPSEEK_API_KEY=your_deepseek_key
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_DEFAULT_QUALITY=720
 TELEGRAM_MAX_PART_SECONDS=900
+TELEGRAM_MAX_UPLOAD_MB=45
 ```
 
 4. Install Python dependencies:
@@ -61,6 +62,7 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 LOG_LEVEL=INFO
 TELEGRAM_DEFAULT_QUALITY=720
 TELEGRAM_MAX_PART_SECONDS=900
+TELEGRAM_MAX_UPLOAD_MB=45
 ```
 
 3. Deploy. Railway should build with the root `Dockerfile`.
@@ -90,7 +92,7 @@ The bot accepts:
 
 Telegram jobs default to English source audio, Arabic captions, font size 14, emoji off, and document-first delivery. Telegram output defaults to 720p to avoid Bot API upload limits. Use `/quality 720` or `/quality 1080` in the bot to choose per chat.
 
-Long Telegram videos are split automatically before captioning. The default part length is 15 minutes (`TELEGRAM_MAX_PART_SECONDS=900`), so a 1-hour video becomes 4 files.
+Long Telegram videos are split automatically before captioning. The default part length is 15 minutes (`TELEGRAM_MAX_PART_SECONDS=900`), so a 1-hour video becomes 4 files. Captioned outputs that are still too large for Telegram are split again before upload using `TELEGRAM_MAX_UPLOAD_MB=45`.
 
 Landscape videos are automatically converted to 9:16 before captions are added, using a blurred vertical background with the full original frame centered.
 

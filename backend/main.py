@@ -28,6 +28,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_DEFAULT_QUALITY = int(os.getenv("TELEGRAM_DEFAULT_QUALITY", "720"))
 TELEGRAM_MAX_PART_SECONDS = max(60, int(os.getenv("TELEGRAM_MAX_PART_SECONDS", "900")))
+TELEGRAM_MAX_UPLOAD_MB = max(5, int(os.getenv("TELEGRAM_MAX_UPLOAD_MB", "45")))
 
 BASE_DIR = Path(__file__).parent
 TEMP_DIR = BASE_DIR / "temp"
@@ -207,6 +208,13 @@ def _set_telegram_quality(chat_id: int | str, text: str) -> str | None:
     return f"Quality set to {parts[1]}p."
 
 
+def _safe_error_message(exc: Exception) -> str:
+    message = str(exc)
+    if TELEGRAM_BOT_TOKEN:
+        message = message.replace(TELEGRAM_BOT_TOKEN, "[redacted]")
+    return message.replace(f"/bot{TELEGRAM_BOT_TOKEN}", "/bot[redacted]")
+
+
 def _run_telegram_job(
     chat_id: int | str,
     file_id: str | None = None,
@@ -218,13 +226,14 @@ def _run_telegram_job(
 ):
     from services.downloader import download_video
     from services.telegram_bot import TelegramBot
-    from services.video_tools import split_video
+    from services.video_tools import split_video, split_video_by_size
 
     bot = TelegramBot(TELEGRAM_BOT_TOKEN)
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
     video_path = str(TEMP_DIR / f"{job_id}.mp4")
     split_part_paths: list[str] = []
+    upload_part_paths: list[str] = []
     last_download_update_at = 0.0
     step_messages = {
         "preparing_video": "Preparing video format...",
@@ -323,14 +332,31 @@ def _run_telegram_job(
                 raise RuntimeError("Caption processing finished without an output file.")
 
             output_path = OUTPUT_DIR / output_name
-            caption = f"Done. Part {index}/{len(parts)}." if len(parts) > 1 else "Done."
-            set_status(part_label + f"Uploading {max_height}p MP4 to Telegram...")
-            try:
-                bot.send_document(chat_id, str(output_path), caption=caption)
-            except Exception:
-                log.exception("telegram sendDocument failed for job %s; trying sendVideo", part_job_id)
-                bot.send_video(chat_id, str(output_path), caption=caption)
-            sent_count += 1
+            upload_files = split_video_by_size(
+                str(output_path),
+                TEMP_DIR,
+                f"{part_job_id}_upload",
+                TELEGRAM_MAX_UPLOAD_MB * 1024 * 1024,
+            )
+            if len(upload_files) > 1:
+                upload_part_paths.extend(upload_files)
+                set_status(part_label + f"Output is large. Sending it as {len(upload_files)} smaller files.")
+
+            for upload_index, upload_path in enumerate(upload_files, start=1):
+                caption_parts = ["Done."]
+                if len(parts) > 1:
+                    caption_parts.append(f"Source part {index}/{len(parts)}.")
+                if len(upload_files) > 1:
+                    caption_parts.append(f"Upload part {upload_index}/{len(upload_files)}.")
+                caption = " ".join(caption_parts)
+
+                set_status(part_label + f"Uploading {max_height}p MP4 to Telegram...")
+                try:
+                    bot.send_document(chat_id, upload_path, caption=caption)
+                except Exception:
+                    log.exception("telegram sendDocument failed for job %s; trying sendVideo", part_job_id)
+                    bot.send_video(chat_id, upload_path, caption=caption)
+                sent_count += 1
 
         if len(parts) > 1 and os.path.exists(video_path):
             os.remove(video_path)
@@ -339,11 +365,11 @@ def _run_telegram_job(
 
     except Exception as exc:
         log.exception("telegram job %s failed", job_id)
-        for path in [video_path, *split_part_paths]:
+        for path in [video_path, *split_part_paths, *upload_part_paths]:
             if os.path.exists(path):
                 os.remove(path)
         try:
-            set_status(f"Error: {exc}")
+            set_status(f"Error: {_safe_error_message(exc)}")
         except Exception:
             log.exception("failed to send Telegram error message for job %s", job_id)
 
