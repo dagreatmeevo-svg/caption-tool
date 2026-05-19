@@ -306,6 +306,7 @@ async def process(
                     shutil.move(downloaded, video_path)
                 _run_pipeline(job_id, video_path, font_size=font_size, use_emoji=use_emoji, source_language=source_language)
             except Exception as e:
+                log.exception("job %s: URL pipeline failed", job_id)
                 jobs[job_id]["status"] = "error"
                 jobs[job_id]["error"] = str(e)
 

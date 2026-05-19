@@ -111,6 +111,12 @@ def _stderr_tail(path: str, limit: int = 12000) -> str:
         return ""
 
 
+def _run_ffmpeg(cmd: list[str], log_file: str) -> tuple[int, str]:
+    with open(log_file, "w", encoding="utf-8") as stderr:
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=stderr, text=True)
+    return result.returncode, _stderr_tail(log_file)
+
+
 def burn_subtitles(
     video_path: str,
     srt_path:   str,
@@ -173,13 +179,17 @@ def burn_subtitles(
     filter_file = srt_path.replace('.srt', '_fc.txt')
     ffmpeg_log_file = srt_path.replace('.srt', '_ffmpeg.log')
     ffmpeg_loglevel = os.getenv("CAPTION_FFMPEG_LOGLEVEL", "error")
+    video_threads = os.getenv("CAPTION_FFMPEG_THREADS", "1")
+    audio_args = ['-c:a', 'aac', '-b:a', '128k']
 
     if not slot_intervals:
         # Fast path — plain subtitle burn, no emoji overlay
         cmd = [
             'ffmpeg', '-y', '-nostdin', '-loglevel', ffmpeg_loglevel, '-i', video_path,
             '-vf', subtitle_filter,
-            '-c:v', 'libx264', '-crf', str(crf), '-preset', preset, '-c:a', 'copy',
+            '-c:v', 'libx264', '-crf', str(crf), '-preset', preset,
+            '-threads', video_threads, '-pix_fmt', 'yuv420p',
+            *audio_args, '-movflags', '+faststart',
             output_path,
         ]
     else:
@@ -211,23 +221,31 @@ def burn_subtitles(
         cmd = ['ffmpeg', '-y', '-nostdin', '-loglevel', ffmpeg_loglevel] + inputs + [
             '-filter_complex_script', filter_file,
             '-map', f'[{cur}]', '-map', '0:a?',
-            '-c:v', 'libx264', '-crf', str(crf), '-preset', preset, '-c:a', 'copy',
+            '-c:v', 'libx264', '-crf', str(crf), '-preset', preset,
+            '-threads', video_threads, '-pix_fmt', 'yuv420p',
+            *audio_args, '-movflags', '+faststart',
             output_path,
         ]
 
     log.info("ffmpeg command: %s", subprocess.list2cmdline(cmd))
-    with open(ffmpeg_log_file, "w", encoding="utf-8") as stderr:
-        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=stderr, text=True)
-    log.info("ffmpeg returncode=%s", result.returncode)
+    returncode, stderr_tail = _run_ffmpeg(cmd, ffmpeg_log_file)
+    log.info("ffmpeg returncode=%s", returncode)
+
+    if returncode != 0 and preset != "ultrafast":
+        retry_cmd = cmd.copy()
+        retry_cmd[retry_cmd.index('-preset') + 1] = 'ultrafast'
+        log.warning("ffmpeg failed with preset=%s; retrying with ultrafast. stderr tail:\n%s", preset, stderr_tail)
+        returncode, stderr_tail = _run_ffmpeg(retry_cmd, ffmpeg_log_file)
+        log.info("ffmpeg retry returncode=%s", returncode)
 
     if os.path.exists(filter_file):
         os.remove(filter_file)
 
-    if result.returncode != 0:
-        stderr_tail = _stderr_tail(ffmpeg_log_file)
+    if returncode != 0:
         if os.path.exists(ffmpeg_log_file):
             os.remove(ffmpeg_log_file)
-        raise RuntimeError(f'FFmpeg failed:\n{stderr_tail}')
+        detail = stderr_tail.strip() or f"ffmpeg exited with code {returncode}"
+        raise RuntimeError(f'FFmpeg failed:\n{detail}')
 
     if os.path.exists(ffmpeg_log_file):
         os.remove(ffmpeg_log_file)
