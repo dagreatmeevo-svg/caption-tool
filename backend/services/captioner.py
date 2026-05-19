@@ -106,6 +106,8 @@ def burn_subtitles(
     output_path: str,
     font_size:  int = 22,
     segments:   list[dict] | None = None,   # original segments (with emojis) for overlay
+    crf: int = 18,
+    preset: str = "fast",
 ):
     srt_esc = _ffmpeg_filter_path(srt_path)
     fontsdir_mode = os.getenv("CAPTION_FONTSDIR_MODE", "dir").lower()
@@ -164,7 +166,7 @@ def burn_subtitles(
         cmd = [
             'ffmpeg', '-y', '-loglevel', 'verbose', '-i', video_path,
             '-vf', subtitle_filter,
-            '-c:v', 'libx264', '-crf', '18', '-preset', 'fast', '-c:a', 'copy',
+            '-c:v', 'libx264', '-crf', str(crf), '-preset', preset, '-c:a', 'copy',
             output_path,
         ]
     else:
@@ -196,7 +198,7 @@ def burn_subtitles(
         cmd = ['ffmpeg', '-y', '-loglevel', 'verbose'] + inputs + [
             '-filter_complex_script', filter_file,
             '-map', f'[{cur}]', '-map', '0:a?',
-            '-c:v', 'libx264', '-crf', '18', '-preset', 'fast', '-c:a', 'copy',
+            '-c:v', 'libx264', '-crf', str(crf), '-preset', preset, '-c:a', 'copy',
             output_path,
         ]
 

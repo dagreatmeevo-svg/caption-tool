@@ -66,6 +66,8 @@ def _run_pipeline(
     font_size: int = 22,
     use_emoji: bool = False,
     source_language: str = "auto",
+    video_crf: int = 18,
+    video_preset: str = "fast",
 ):
     from services.downloader import download_video
     from services.transcriber import transcribe
@@ -112,6 +114,8 @@ def _run_pipeline(
             output_path,
             font_size=font_size,
             segments=arabic_segments if use_emoji and source_language != "ar" else [],
+            crf=video_crf,
+            preset=video_preset,
         )
 
         # Cleanup temp files
@@ -197,6 +201,8 @@ def _run_telegram_job(
             font_size=font_size,
             use_emoji=False,
             source_language=source_language,
+            video_crf=28,
+            video_preset="veryfast",
         )
 
         job = jobs[job_id]
@@ -209,10 +215,10 @@ def _run_telegram_job(
 
         output_path = OUTPUT_DIR / output_name
         try:
-            bot.send_video(chat_id, str(output_path), caption="Done.")
-        except Exception:
-            log.exception("telegram sendVideo failed for job %s; trying sendDocument", job_id)
             bot.send_document(chat_id, str(output_path), caption="Done.")
+        except Exception:
+            log.exception("telegram sendDocument failed for job %s; trying sendVideo", job_id)
+            bot.send_video(chat_id, str(output_path), caption="Done.")
 
     except Exception as exc:
         log.exception("telegram job %s failed", job_id)
