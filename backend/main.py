@@ -5,6 +5,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -68,6 +69,7 @@ def _run_pipeline(
     source_language: str = "auto",
     video_crf: int = 18,
     video_preset: str = "fast",
+    on_step: Callable[[str], None] | None = None,
 ):
     from services.downloader import download_video
     from services.transcriber import transcribe
@@ -75,9 +77,18 @@ def _run_pipeline(
     from services.srt_builder import write_srt
     from services.captioner import burn_subtitles
 
+    last_step_at = time.monotonic()
+
     def step(msg: str):
+        nonlocal last_step_at
+        now = time.monotonic()
+        if jobs[job_id]["status"] != "starting":
+            log.info("job %s: step %s took %.1fs", job_id, jobs[job_id]["status"], now - last_step_at)
+        last_step_at = now
         jobs[job_id]["steps"].append(msg)
         jobs[job_id]["status"] = msg
+        if on_step:
+            on_step(msg)
 
     try:
         log.info(
@@ -179,6 +190,18 @@ def _run_telegram_job(
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
     video_path = str(TEMP_DIR / f"{job_id}.mp4")
+    step_messages = {
+        "extracting_audio": "Extracting audio...",
+        "transcribed": "Transcription complete. Translating to Arabic...",
+        "translating": "Translating to Arabic...",
+        "building_srt": "Building subtitles...",
+        "burning_captions": "Burning captions into the video...",
+    }
+
+    def notify_step(status: str):
+        message = step_messages.get(status)
+        if message:
+            bot.send_message(chat_id, message)
 
     try:
         _check_pipeline_keys(source_language)
@@ -186,9 +209,11 @@ def _run_telegram_job(
 
         if file_id:
             jobs[job_id]["status"] = "downloading"
+            bot.send_message(chat_id, "Downloading Telegram video...")
             bot.download_file(file_id, video_path)
         elif url:
             jobs[job_id]["status"] = "downloading"
+            bot.send_message(chat_id, "Downloading video from URL...")
             downloaded = download_video(url, video_path.replace(".mp4", ""))
             if os.path.exists(downloaded) and downloaded != video_path:
                 shutil.move(downloaded, video_path)
@@ -201,6 +226,7 @@ def _run_telegram_job(
             font_size=font_size,
             use_emoji=False,
             source_language=source_language,
+            on_step=notify_step,
         )
 
         job = jobs[job_id]
@@ -212,6 +238,7 @@ def _run_telegram_job(
             raise RuntimeError("Caption processing finished without an output file.")
 
         output_path = OUTPUT_DIR / output_name
+        bot.send_message(chat_id, "Uploading full-quality MP4 to Telegram...")
         try:
             bot.send_document(chat_id, str(output_path), caption="Done.")
         except Exception:
