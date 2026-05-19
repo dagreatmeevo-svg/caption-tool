@@ -84,7 +84,7 @@ The bot accepts:
 - A video file sent directly to the bot.
 - A TikTok, YouTube, or Instagram URL sent as text.
 
-Arabic is the default source language for Telegram jobs.
+Telegram jobs default to English source audio, Arabic captions, font size 14, and emoji off.
 
 ### Vercel
 

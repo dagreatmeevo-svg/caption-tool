@@ -165,8 +165,8 @@ def _run_telegram_job(
     chat_id: int | str,
     file_id: str | None = None,
     url: str = "",
-    source_language: str = "ar",
-    font_size: int = 34,
+    source_language: str = "en",
+    font_size: int = 14,
 ):
     from services.downloader import download_video
     from services.telegram_bot import TelegramBot
@@ -296,7 +296,7 @@ async def telegram_webhook(request: Request):
         TelegramBot(TELEGRAM_BOT_TOKEN).send_message(
             chat_id,
             "Send me a video file or a TikTok/YouTube/Instagram URL. "
-            "Arabic is the default source language.",
+            "I will translate English audio to Arabic captions with font size 14 and no emoji.",
         )
         return {"ok": True}
 
