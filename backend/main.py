@@ -201,8 +201,6 @@ def _run_telegram_job(
             font_size=font_size,
             use_emoji=False,
             source_language=source_language,
-            video_crf=28,
-            video_preset="veryfast",
         )
 
         job = jobs[job_id]

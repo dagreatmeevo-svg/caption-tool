@@ -84,7 +84,7 @@ The bot accepts:
 - A video file sent directly to the bot.
 - A TikTok, YouTube, or Instagram URL sent as text.
 
-Telegram jobs default to English source audio, Arabic captions, font size 14, emoji off, faster video encoding, and document-first delivery for quicker file sending.
+Telegram jobs default to English source audio, Arabic captions, font size 14, emoji off, full-quality video encoding, and document-first delivery.
 
 ### Vercel
 
