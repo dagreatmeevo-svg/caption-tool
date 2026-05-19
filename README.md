@@ -21,6 +21,7 @@ GROQ_API_KEY=your_groq_key
 DEEPSEEK_API_KEY=your_deepseek_key
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_DEFAULT_QUALITY=720
+TELEGRAM_MAX_PART_SECONDS=900
 ```
 
 4. Install Python dependencies:
@@ -59,6 +60,7 @@ DEEPSEEK_API_KEY=your_deepseek_key
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 LOG_LEVEL=INFO
 TELEGRAM_DEFAULT_QUALITY=720
+TELEGRAM_MAX_PART_SECONDS=900
 ```
 
 3. Deploy. Railway should build with the root `Dockerfile`.
@@ -87,6 +89,20 @@ The bot accepts:
 - A TikTok, YouTube, or Instagram URL sent as text.
 
 Telegram jobs default to English source audio, Arabic captions, font size 14, emoji off, and document-first delivery. Telegram output defaults to 720p to avoid Bot API upload limits. Use `/quality 720` or `/quality 1080` in the bot to choose per chat.
+
+Long Telegram videos are split automatically before captioning. The default part length is 15 minutes (`TELEGRAM_MAX_PART_SECONDS=900`), so a 1-hour video becomes 4 files.
+
+Landscape videos are automatically converted to 9:16 before captions are added, using a blurred vertical background with the full original frame centered.
+
+### YouTube cookies
+
+Some YouTube URLs require logged-in cookies and will fail with "Sign in to confirm you're not a bot" without them. Export YouTube cookies in Netscape format from your browser and add them to Railway as one of these env vars:
+
+- `YTDLP_COOKIES_B64` - recommended. Base64-encode the full cookies file content and paste it here.
+- `YTDLP_COOKIES` - raw Netscape cookies text. Multiline values must be preserved.
+- `YTDLP_COOKIES_FILE` - path to a cookies file, useful for local/dev environments.
+
+Cookies are secrets. Rotate/re-export them if YouTube starts rejecting downloads again.
 
 ### Vercel
 

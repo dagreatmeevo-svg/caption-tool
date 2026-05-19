@@ -27,6 +27,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_DEFAULT_QUALITY = int(os.getenv("TELEGRAM_DEFAULT_QUALITY", "720"))
+TELEGRAM_MAX_PART_SECONDS = max(60, int(os.getenv("TELEGRAM_MAX_PART_SECONDS", "900")))
 
 BASE_DIR = Path(__file__).parent
 TEMP_DIR = BASE_DIR / "temp"
@@ -75,13 +76,14 @@ def _run_pipeline(
     max_height: int | None = None,
     on_step: Callable[[str], None] | None = None,
 ):
-    from services.downloader import download_video
     from services.transcriber import transcribe
     from services.translator import translate_to_arabic
     from services.srt_builder import write_srt
     from services.captioner import burn_subtitles
+    from services.video_tools import normalize_landscape_to_vertical
 
     last_step_at = time.monotonic()
+    cleanup_paths = {video_path}
 
     def step(msg: str):
         nonlocal last_step_at
@@ -103,6 +105,13 @@ def _run_pipeline(
             use_emoji,
             source_language,
         )
+        step("preparing_video")
+        vertical_path = str(TEMP_DIR / f"{job_id}_vertical.mp4")
+        prepared_video_path = normalize_landscape_to_vertical(video_path, vertical_path)
+        if prepared_video_path != video_path:
+            cleanup_paths.add(prepared_video_path)
+            video_path = prepared_video_path
+
         step("extracting_audio")
         transcribe_language = None if source_language == "auto" else source_language
         segments = transcribe(video_path, GROQ_API_KEY, language=transcribe_language)
@@ -119,6 +128,7 @@ def _run_pipeline(
             arabic_segments = translate_to_arabic(segments, DEEPSEEK_API_KEY, use_emoji=use_emoji)
 
         srt_path = str(TEMP_DIR / f"{job_id}.srt")
+        cleanup_paths.add(srt_path)
         write_srt(arabic_segments, srt_path)
 
         step("burning_captions")
@@ -135,7 +145,7 @@ def _run_pipeline(
         )
 
         # Cleanup temp files
-        for f in [video_path, srt_path]:
+        for f in cleanup_paths:
             if os.path.exists(f):
                 os.remove(f)
 
@@ -156,7 +166,7 @@ def _run_pipeline(
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(e)
         # Clean up on error
-        for f in [video_path]:
+        for f in cleanup_paths:
             if os.path.exists(f):
                 os.remove(f)
 
@@ -207,13 +217,16 @@ def _run_telegram_job(
 ):
     from services.downloader import download_video
     from services.telegram_bot import TelegramBot
+    from services.video_tools import split_video
 
     bot = TelegramBot(TELEGRAM_BOT_TOKEN)
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
     video_path = str(TEMP_DIR / f"{job_id}.mp4")
+    split_part_paths: list[str] = []
     status_message_id = None
     step_messages = {
+        "preparing_video": "Preparing video format...",
         "extracting_audio": "Extracting audio...",
         "transcribed": "Transcription complete. Translating to Arabic...",
         "translating": "Translating to Arabic...",
@@ -233,11 +246,6 @@ def _run_telegram_job(
         except Exception:
             log.exception("failed to edit Telegram status message for job %s", job_id)
 
-    def notify_step(status: str):
-        message = step_messages.get(status)
-        if message:
-            set_status(message)
-
     try:
         _check_pipeline_keys(source_language)
         set_status("Received. Processing captions now.")
@@ -255,35 +263,64 @@ def _run_telegram_job(
         else:
             raise ValueError("Send a video file or a supported video URL.")
 
-        _run_pipeline(
-            job_id,
-            video_path,
-            font_size=font_size,
-            use_emoji=False,
-            source_language=source_language,
-            max_height=max_height,
-            on_step=notify_step,
-        )
+        set_status("Checking video length...")
+        parts = split_video(video_path, TEMP_DIR, job_id, TELEGRAM_MAX_PART_SECONDS)
+        split_part_paths = parts if len(parts) > 1 else []
+        if len(parts) > 1:
+            set_status(f"Video is long. Split into {len(parts)} parts.")
 
-        job = jobs[job_id]
-        if job["status"] == "error":
-            raise RuntimeError(job.get("error") or "Caption processing failed.")
+        sent_count = 0
+        for index, part_path in enumerate(parts, start=1):
+            part_job_id = job_id if len(parts) == 1 else f"{job_id}_part_{index:03d}"
+            if part_job_id != job_id:
+                jobs[part_job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
 
-        output_name = job.get("output")
-        if not output_name:
-            raise RuntimeError("Caption processing finished without an output file.")
+            part_label = f"Part {index}/{len(parts)}: " if len(parts) > 1 else ""
 
-        output_path = OUTPUT_DIR / output_name
-        set_status(f"Uploading {max_height}p MP4 to Telegram...")
-        try:
-            bot.send_document(chat_id, str(output_path), caption="Done.")
-        except Exception:
-            log.exception("telegram sendDocument failed for job %s; trying sendVideo", job_id)
-            bot.send_video(chat_id, str(output_path), caption="Done.")
-        set_status("Done. File sent.")
+            def notify_part_step(status: str, label: str = part_label):
+                message = step_messages.get(status)
+                if message:
+                    set_status(label + message)
+
+            set_status(part_label + "Processing captions now.")
+            _run_pipeline(
+                part_job_id,
+                part_path,
+                font_size=font_size,
+                use_emoji=False,
+                source_language=source_language,
+                max_height=max_height,
+                on_step=notify_part_step,
+            )
+
+            job = jobs[part_job_id]
+            if job["status"] == "error":
+                raise RuntimeError(job.get("error") or "Caption processing failed.")
+
+            output_name = job.get("output")
+            if not output_name:
+                raise RuntimeError("Caption processing finished without an output file.")
+
+            output_path = OUTPUT_DIR / output_name
+            caption = f"Done. Part {index}/{len(parts)}." if len(parts) > 1 else "Done."
+            set_status(part_label + f"Uploading {max_height}p MP4 to Telegram...")
+            try:
+                bot.send_document(chat_id, str(output_path), caption=caption)
+            except Exception:
+                log.exception("telegram sendDocument failed for job %s; trying sendVideo", part_job_id)
+                bot.send_video(chat_id, str(output_path), caption=caption)
+            sent_count += 1
+
+        if len(parts) > 1 and os.path.exists(video_path):
+            os.remove(video_path)
+
+        set_status(f"Done. Sent {sent_count} file(s).")
 
     except Exception as exc:
         log.exception("telegram job %s failed", job_id)
+        for path in [video_path, *split_part_paths]:
+            if os.path.exists(path):
+                os.remove(path)
         try:
             set_status(f"Error: {exc}")
         except Exception:

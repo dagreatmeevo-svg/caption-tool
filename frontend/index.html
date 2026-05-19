@@ -393,11 +393,12 @@
     // ── Progress ──
     const STEP_PROGRESS = {
       starting: 5, uploading: 8, downloading: 15,
-      extracting_audio: 30, transcribed: 55,
+      preparing_video: 22, extracting_audio: 30, transcribed: 55,
       translating: 70, building_srt: 80,
       burning_captions: 90, done: 100,
     };
     const STEP_LABELS = {
+      preparing_video: 'Preparing video format...',
       starting: 'جارٍ البدء...', uploading: 'جارٍ الرفع...',
       downloading: 'جارٍ التحميل...', extracting_audio: 'استخراج الصوت...',
       transcribed: 'جارٍ النسخ...', translating: 'الترجمة إلى العربية...',
@@ -410,7 +411,7 @@
       document.getElementById('progress-bar').style.width = pct + '%';
       document.getElementById('progress-label').textContent = STEP_LABELS[status] || status;
 
-      const stepOrder = ['downloading', 'extracting_audio', 'transcribed', 'translating', 'burning_captions', 'done'];
+      const stepOrder = ['downloading', 'preparing_video', 'extracting_audio', 'transcribed', 'translating', 'burning_captions', 'done'];
       const currentIdx = stepOrder.indexOf(status === 'uploading' ? 'downloading' : status);
       stepOrder.forEach((step, i) => {
         const dot = document.getElementById('dot-' + step);
