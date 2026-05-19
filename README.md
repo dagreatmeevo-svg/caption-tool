@@ -19,6 +19,7 @@ Upload a video or paste a TikTok, YouTube, or Instagram link and get back an MP4
 ```env
 GROQ_API_KEY=your_groq_key
 DEEPSEEK_API_KEY=your_deepseek_key
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 ```
 
 4. Install Python dependencies:
@@ -54,6 +55,7 @@ This repo includes:
 ```env
 GROQ_API_KEY=your_groq_key
 DEEPSEEK_API_KEY=your_deepseek_key
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 LOG_LEVEL=INFO
 ```
 
@@ -66,6 +68,23 @@ python start.py
 ```
 
 Do not use `cd backend && ...` as a Railway start command.
+
+### Telegram Bot
+
+1. Create a bot with Telegram [@BotFather](https://t.me/BotFather).
+2. Copy the bot token into Railway as `TELEGRAM_BOT_TOKEN`.
+3. After Railway deploys, set the webhook:
+
+```bash
+curl "https://api.telegram.org/botYOUR_BOT_TOKEN/setWebhook?url=https://YOUR_RAILWAY_DOMAIN/telegram/webhook"
+```
+
+The bot accepts:
+
+- A video file sent directly to the bot.
+- A TikTok, YouTube, or Instagram URL sent as text.
+
+Arabic is the default source language for Telegram jobs.
 
 ### Vercel
 
