@@ -455,6 +455,35 @@
         return;
       }
 
+      let polling = false;
+      const pollStatus = () => {
+        if (polling) return;
+        polling = true;
+        const timer = setInterval(async () => {
+          try {
+            const res = await fetch(API_BASE + `/status/${jobId}`);
+            const data = await res.json();
+            if (!res.ok) {
+              clearInterval(timer);
+              showError(data.detail || 'Server error');
+              return;
+            }
+            if (data.status === 'error') {
+              clearInterval(timer);
+              showError(data.error || 'Server error');
+              return;
+            }
+            setProgress(data.status);
+            if (data.status === 'done') {
+              clearInterval(timer);
+              showResult(data.output);
+            }
+          } catch (err) {
+            setProgress('starting');
+          }
+        }, 3000);
+      };
+
       const evtSource = new EventSource(API_BASE + `/progress/${jobId}`);
       evtSource.onmessage = (e) => {
         const data = JSON.parse(e.data);
@@ -471,7 +500,8 @@
       };
       evtSource.onerror = () => {
         evtSource.close();
-        showError('انقطع الاتصال بالخادم');
+        pollStatus();
+        return;
       };
     }
 

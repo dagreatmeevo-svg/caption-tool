@@ -43,16 +43,31 @@ def _cookies_file() -> str | None:
     return str(path)
 
 
-def download_video(url: str, output_path: str) -> str:
+def _format_selector(max_height: int | None) -> str:
+    if not max_height:
+        return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+
+    return (
+        f"bestvideo[height<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={max_height}]+bestaudio/"
+        f"best[height<={max_height}][ext=mp4]/"
+        f"best[height<={max_height}]/best"
+    )
+
+
+def download_video(url: str, output_path: str, max_height: int | None = None, progress_callback=None) -> str:
     """Download video from URL using yt-dlp. Returns the final file path."""
     ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": _format_selector(max_height),
         "merge_output_format": "mp4",
         "outtmpl": output_path,
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
     }
+    if progress_callback:
+        ydl_opts["progress_hooks"] = [progress_callback]
+
     cookies_file = _cookies_file()
     if cookies_file:
         ydl_opts["cookiefile"] = cookies_file

@@ -214,6 +214,7 @@ def _run_telegram_job(
     source_language: str = "en",
     font_size: int = 14,
     max_height: int = 720,
+    status_message_id: int | None = None,
 ):
     from services.downloader import download_video
     from services.telegram_bot import TelegramBot
@@ -224,7 +225,7 @@ def _run_telegram_job(
     jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
     video_path = str(TEMP_DIR / f"{job_id}.mp4")
     split_part_paths: list[str] = []
-    status_message_id = None
+    last_download_update_at = 0.0
     step_messages = {
         "preparing_video": "Preparing video format...",
         "extracting_audio": "Extracting audio...",
@@ -246,6 +247,21 @@ def _run_telegram_job(
         except Exception:
             log.exception("failed to edit Telegram status message for job %s", job_id)
 
+    def download_progress(info: dict):
+        nonlocal last_download_update_at
+        now = time.monotonic()
+        if now - last_download_update_at < 15 and info.get("status") != "finished":
+            return
+
+        last_download_update_at = now
+        downloaded = info.get("downloaded_bytes") or 0
+        total = info.get("total_bytes") or info.get("total_bytes_estimate") or 0
+        if total:
+            percent = min(100, int(downloaded * 100 / total))
+            set_status(f"Downloading YouTube video at {max_height}p... {percent}%")
+        else:
+            set_status(f"Downloading YouTube video at {max_height}p...")
+
     try:
         _check_pipeline_keys(source_language)
         set_status("Received. Processing captions now.")
@@ -256,8 +272,13 @@ def _run_telegram_job(
             bot.download_file(file_id, video_path)
         elif url:
             jobs[job_id]["status"] = "downloading"
-            set_status("Downloading video from URL...")
-            downloaded = download_video(url, video_path.replace(".mp4", ""))
+            set_status(f"Downloading video from URL at {max_height}p...")
+            downloaded = download_video(
+                url,
+                video_path.replace(".mp4", ""),
+                max_height=max_height,
+                progress_callback=download_progress,
+            )
             if os.path.exists(downloaded) and downloaded != video_path:
                 shutil.move(downloaded, video_path)
         else:
@@ -422,6 +443,14 @@ async def telegram_webhook(request: Request):
         )
         return {"ok": True}
 
+    from services.telegram_bot import TelegramBot
+
+    status_message = TelegramBot(TELEGRAM_BOT_TOKEN).send_message(
+        chat_id,
+        f"Queued. I will download at {_telegram_quality(chat_id)}p and split long videos automatically.",
+    )
+    status_message_id = status_message.get("message_id")
+
     threading.Thread(
         target=_run_telegram_job,
         kwargs={
@@ -429,6 +458,7 @@ async def telegram_webhook(request: Request):
             "file_id": file_id,
             "url": text if _looks_like_url(text) else "",
             "max_height": _telegram_quality(chat_id),
+            "status_message_id": status_message_id,
         },
         daemon=True,
     ).start()
@@ -469,6 +499,19 @@ async def progress(job_id: str):
             await asyncio.sleep(0.5)
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@app.get("/status/{job_id}")
+def status(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+    return {
+        "status": job["status"],
+        "error": job.get("error") or "",
+        "output": job.get("output") or "",
+    }
 
 
 @app.get("/download/{filename}")
