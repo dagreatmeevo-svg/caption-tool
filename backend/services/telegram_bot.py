@@ -31,6 +31,12 @@ class TelegramBot:
     def send_message(self, chat_id: int | str, text: str):
         return self._post("sendMessage", data={"chat_id": chat_id, "text": text})
 
+    def edit_message_text(self, chat_id: int | str, message_id: int, text: str):
+        return self._post(
+            "editMessageText",
+            data={"chat_id": chat_id, "message_id": message_id, "text": text},
+        )
+
     def send_video(self, chat_id: int | str, video_path: str, caption: str = ""):
         with open(video_path, "rb") as video:
             return self._post(

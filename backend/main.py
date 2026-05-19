@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -190,6 +191,7 @@ def _run_telegram_job(
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
     video_path = str(TEMP_DIR / f"{job_id}.mp4")
+    status_message_id = None
     step_messages = {
         "extracting_audio": "Extracting audio...",
         "transcribed": "Transcription complete. Translating to Arabic...",
@@ -198,22 +200,34 @@ def _run_telegram_job(
         "burning_captions": "Burning captions into the video...",
     }
 
+    def set_status(text: str):
+        nonlocal status_message_id
+        if status_message_id is None:
+            result = bot.send_message(chat_id, text)
+            status_message_id = result.get("message_id")
+            return
+
+        try:
+            bot.edit_message_text(chat_id, status_message_id, text)
+        except Exception:
+            log.exception("failed to edit Telegram status message for job %s", job_id)
+
     def notify_step(status: str):
         message = step_messages.get(status)
         if message:
-            bot.send_message(chat_id, message)
+            set_status(message)
 
     try:
         _check_pipeline_keys(source_language)
-        bot.send_message(chat_id, "Received. Processing captions now.")
+        set_status("Received. Processing captions now.")
 
         if file_id:
             jobs[job_id]["status"] = "downloading"
-            bot.send_message(chat_id, "Downloading Telegram video...")
+            set_status("Downloading Telegram video...")
             bot.download_file(file_id, video_path)
         elif url:
             jobs[job_id]["status"] = "downloading"
-            bot.send_message(chat_id, "Downloading video from URL...")
+            set_status("Downloading video from URL...")
             downloaded = download_video(url, video_path.replace(".mp4", ""))
             if os.path.exists(downloaded) and downloaded != video_path:
                 shutil.move(downloaded, video_path)
@@ -238,17 +252,18 @@ def _run_telegram_job(
             raise RuntimeError("Caption processing finished without an output file.")
 
         output_path = OUTPUT_DIR / output_name
-        bot.send_message(chat_id, "Uploading full-quality MP4 to Telegram...")
+        set_status("Uploading full-quality MP4 to Telegram...")
         try:
             bot.send_document(chat_id, str(output_path), caption="Done.")
         except Exception:
             log.exception("telegram sendDocument failed for job %s; trying sendVideo", job_id)
             bot.send_video(chat_id, str(output_path), caption="Done.")
+        set_status("Done. File sent.")
 
     except Exception as exc:
         log.exception("telegram job %s failed", job_id)
         try:
-            bot.send_message(chat_id, f"Error: {exc}")
+            set_status(f"Error: {exc}")
         except Exception:
             log.exception("failed to send Telegram error message for job %s", job_id)
 
@@ -360,22 +375,25 @@ async def progress(job_id: str):
 
     async def _stream():
         last_status = None
+        last_emit_at = 0.0
         while True:
             job = jobs.get(job_id)
             if not job:
-                yield f"data: {{'status': 'error', 'error': 'Job not found'}}\n\n"
+                yield f"data: {json.dumps({'status': 'error', 'error': 'Job not found'})}\n\n"
                 break
 
             current = job["status"]
-            if current != last_status:
+            now = time.monotonic()
+            should_emit = current != last_status or now - last_emit_at >= 10
+            if should_emit:
                 last_status = current
-                error = job.get("error") or ""
-                output = job.get("output") or ""
-                yield (
-                    f"data: {{\"status\": \"{current}\", "
-                    f"\"error\": \"{error}\", "
-                    f"\"output\": \"{output}\"}}\n\n"
-                )
+                last_emit_at = now
+                payload = {
+                    "status": current,
+                    "error": job.get("error") or "",
+                    "output": job.get("output") or "",
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
 
             if current in ("done", "error"):
                 break
