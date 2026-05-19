@@ -6,7 +6,18 @@ import yt_dlp
 
 _COOKIE_ENV = "YTDLP_COOKIES"
 _COOKIE_B64_ENV = "YTDLP_COOKIES_B64"
+_COOKIE_B64_PART_PREFIX = "YTDLP_COOKIES_B64_"
 _COOKIE_FILE_ENV = "YTDLP_COOKIES_FILE"
+
+
+def _joined_env_parts(prefix: str) -> str:
+    values = []
+    for index in range(1, 51):
+        value = os.getenv(f"{prefix}{index}")
+        if not value:
+            break
+        values.append(value.strip())
+    return "".join(values)
 
 
 def _cookies_file() -> str | None:
@@ -15,7 +26,7 @@ def _cookies_file() -> str | None:
         return configured
 
     cookies = os.getenv(_COOKIE_ENV)
-    encoded_cookies = os.getenv(_COOKIE_B64_ENV)
+    encoded_cookies = os.getenv(_COOKIE_B64_ENV) or _joined_env_parts(_COOKIE_B64_PART_PREFIX)
     if not cookies and encoded_cookies:
         cookies = base64.b64decode(encoded_cookies).decode("utf-8")
     if not cookies:

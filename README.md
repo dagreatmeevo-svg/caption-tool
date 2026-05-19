@@ -99,6 +99,7 @@ Landscape videos are automatically converted to 9:16 before captions are added, 
 Some YouTube URLs require logged-in cookies and will fail with "Sign in to confirm you're not a bot" without them. Export YouTube cookies in Netscape format from your browser and add them to Railway as one of these env vars:
 
 - `YTDLP_COOKIES_B64` - recommended. Base64-encode the full cookies file content and paste it here.
+- `YTDLP_COOKIES_B64_1`, `YTDLP_COOKIES_B64_2`, etc. - use these when Railway says the value is longer than 32768 characters. Split the base64 text into chunks and paste each chunk into a numbered variable.
 - `YTDLP_COOKIES` - raw Netscape cookies text. Multiline values must be preserved.
 - `YTDLP_COOKIES_FILE` - path to a cookies file, useful for local/dev environments.
 
