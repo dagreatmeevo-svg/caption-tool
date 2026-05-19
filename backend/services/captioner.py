@@ -100,6 +100,17 @@ def _subtitles_filter(srt_esc: str, fonts_dir: str | None, style: str) -> str:
     return ":".join(parts)
 
 
+def _stderr_tail(path: str, limit: int = 12000) -> str:
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - limit))
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def burn_subtitles(
     video_path: str,
     srt_path:   str,
@@ -160,11 +171,13 @@ def burn_subtitles(
     em_y   = f'H-35-{int(font_size * 1.9)}-{em_px}-8'
 
     filter_file = srt_path.replace('.srt', '_fc.txt')
+    ffmpeg_log_file = srt_path.replace('.srt', '_ffmpeg.log')
+    ffmpeg_loglevel = os.getenv("CAPTION_FFMPEG_LOGLEVEL", "error")
 
     if not slot_intervals:
         # Fast path — plain subtitle burn, no emoji overlay
         cmd = [
-            'ffmpeg', '-y', '-loglevel', 'verbose', '-i', video_path,
+            'ffmpeg', '-y', '-nostdin', '-loglevel', ffmpeg_loglevel, '-i', video_path,
             '-vf', subtitle_filter,
             '-c:v', 'libx264', '-crf', str(crf), '-preset', preset, '-c:a', 'copy',
             output_path,
@@ -195,7 +208,7 @@ def burn_subtitles(
         Path(filter_file).write_text(filter_content, encoding='utf-8')
         log.info("ffmpeg filter_complex_script %s:\n%s", filter_file, filter_content)
 
-        cmd = ['ffmpeg', '-y', '-loglevel', 'verbose'] + inputs + [
+        cmd = ['ffmpeg', '-y', '-nostdin', '-loglevel', ffmpeg_loglevel] + inputs + [
             '-filter_complex_script', filter_file,
             '-map', f'[{cur}]', '-map', '0:a?',
             '-c:v', 'libx264', '-crf', str(crf), '-preset', preset, '-c:a', 'copy',
@@ -203,14 +216,18 @@ def burn_subtitles(
         ]
 
     log.info("ffmpeg command: %s", subprocess.list2cmdline(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    with open(ffmpeg_log_file, "w", encoding="utf-8") as stderr:
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=stderr, text=True)
     log.info("ffmpeg returncode=%s", result.returncode)
-    log.info("ffmpeg stderr:\n%s", result.stderr)
-    if result.stdout:
-        log.info("ffmpeg stdout:\n%s", result.stdout)
 
     if os.path.exists(filter_file):
         os.remove(filter_file)
 
     if result.returncode != 0:
-        raise RuntimeError(f'FFmpeg failed:\n{result.stderr}')
+        stderr_tail = _stderr_tail(ffmpeg_log_file)
+        if os.path.exists(ffmpeg_log_file):
+            os.remove(ffmpeg_log_file)
+        raise RuntimeError(f'FFmpeg failed:\n{stderr_tail}')
+
+    if os.path.exists(ffmpeg_log_file):
+        os.remove(ffmpeg_log_file)

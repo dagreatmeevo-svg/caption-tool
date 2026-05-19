@@ -13,7 +13,8 @@ class TelegramBot:
         self.file_base = f"https://api.telegram.org/file/bot{token}"
 
     def _post(self, method: str, **kwargs):
-        response = requests.post(f"{self.api_base}/{method}", timeout=60, **kwargs)
+        timeout = kwargs.pop("timeout", 60)
+        response = requests.post(f"{self.api_base}/{method}", timeout=timeout, **kwargs)
         response.raise_for_status()
         data = response.json()
         if not data.get("ok"):
@@ -43,6 +44,7 @@ class TelegramBot:
                 "sendVideo",
                 data={"chat_id": chat_id, "caption": caption},
                 files={"video": (Path(video_path).name, video, "video/mp4")},
+                timeout=600,
             )
 
     def send_document(self, chat_id: int | str, document_path: str, caption: str = ""):
@@ -51,6 +53,7 @@ class TelegramBot:
                 "sendDocument",
                 data={"chat_id": chat_id, "caption": caption},
                 files={"document": (Path(document_path).name, document, "video/mp4")},
+                timeout=600,
             )
 
     def get_file_path(self, file_id: str) -> str:
