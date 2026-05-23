@@ -10,6 +10,7 @@ _DIR      = os.path.dirname(__file__)
 _FONT_DIR = os.path.join(_DIR, "..", "fonts")
 _FONT_FILE = os.path.join(_FONT_DIR, "Cairo-Regular.ttf")
 _WINDOWS_FONT_DIR = r"C:\Windows\Fonts"
+_LINUX_NOTO_SANS_ARABIC = "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"
 _LINUX_NOTO_NASKH = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"
 _EMOJI_CACHE = os.path.join(_DIR, "..", "emoji_cache")
 log = logging.getLogger(__name__)
@@ -83,8 +84,11 @@ def _caption_font() -> tuple[str, str | None]:
         configured_dir = os.getenv("CAPTION_FONT_DIR", "").strip()
         return configured, configured_dir or None
 
-    if os.name == "nt" and os.path.exists(os.path.join(_WINDOWS_FONT_DIR, "tahoma.ttf")):
-        return "Tahoma", None
+    if os.name == "nt" and os.path.exists(os.path.join(_WINDOWS_FONT_DIR, "segoeui.ttf")):
+        return "Segoe UI", None
+
+    if os.path.exists(_LINUX_NOTO_SANS_ARABIC):
+        return "Noto Sans Arabic", None
 
     if os.path.exists(_LINUX_NOTO_NASKH):
         return "Noto Naskh Arabic", None
@@ -158,6 +162,7 @@ def burn_subtitles(
     style = (
         f'FontName={font_name},'
         f'FontSize={font_size},'
+        f'Bold=1,'
         f'Alignment=2,'
         f'MarginV=35,'
         f'PrimaryColour=&H00FFFFFF,'

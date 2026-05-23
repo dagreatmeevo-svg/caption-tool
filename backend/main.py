@@ -172,6 +172,25 @@ def _run_pipeline(
                 os.remove(f)
 
 
+def _store_download_only(job_id: str, video_path: str) -> str:
+    output_name = f"{job_id}_download.mp4"
+    output_path = OUTPUT_DIR / output_name
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    shutil.move(video_path, output_path)
+    jobs[job_id]["output"] = output_name
+    jobs[job_id]["status"] = "done"
+    log.info("job %s: download-only done output=%s", job_id, output_path)
+
+    def _cleanup():
+        time.sleep(86400)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+    threading.Thread(target=_cleanup, daemon=True).start()
+    return output_name
+
+
 def _telegram_file_id(message: dict) -> str | None:
     if message.get("video"):
         return message["video"].get("file_id")
@@ -190,6 +209,16 @@ def _telegram_text(message: dict) -> str:
 
 def _looks_like_url(text: str) -> bool:
     return text.startswith(("http://", "https://"))
+
+
+def _parse_telegram_url_command(text: str) -> tuple[str, bool]:
+    lowered = text.lower()
+    for command in ("/download", "/dl"):
+        if lowered == command:
+            return "", True
+        if lowered.startswith(command + " "):
+            return text[len(command):].strip(), True
+    return text, False
 
 
 def _telegram_quality(chat_id: int | str) -> int:
@@ -215,6 +244,59 @@ def _safe_error_message(exc: Exception) -> str:
     return message.replace(f"/bot{TELEGRAM_BOT_TOKEN}", "/bot[redacted]")
 
 
+def _start_url_job(
+    url: str,
+    font_size: int,
+    use_emoji: bool,
+    source_language: str,
+    start_immediately: bool = True,
+    download_only: bool = False,
+) -> str:
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
+    video_path = str(TEMP_DIR / f"{job_id}.mp4")
+    jobs[job_id]["status"] = "downloading" if start_immediately else "queued"
+
+    def _download():
+        _run_url_job(job_id, url, video_path, font_size, use_emoji, source_language, download_only=download_only)
+
+    if start_immediately:
+        threading.Thread(target=_download, daemon=True).start()
+    return job_id
+
+
+def _run_url_job(
+    job_id: str,
+    url: str,
+    video_path: str,
+    font_size: int,
+    use_emoji: bool,
+    source_language: str,
+    download_only: bool = False,
+):
+    from services.downloader import download_video
+
+    try:
+        jobs[job_id]["status"] = "downloading"
+        downloaded = download_video(url.strip(), video_path.replace(".mp4", ""))
+        if os.path.exists(downloaded) and downloaded != video_path:
+            shutil.move(downloaded, video_path)
+        if download_only:
+            _store_download_only(job_id, video_path)
+            return
+        _run_pipeline(
+            job_id,
+            video_path,
+            font_size=font_size,
+            use_emoji=use_emoji,
+            source_language=source_language,
+        )
+    except Exception as e:
+        log.exception("job %s: URL pipeline failed", job_id)
+        jobs[job_id]["status"] = "error"
+        jobs[job_id]["error"] = str(e)
+
+
 def _run_telegram_job(
     chat_id: int | str,
     file_id: str | None = None,
@@ -223,6 +305,7 @@ def _run_telegram_job(
     font_size: int = 14,
     max_height: int = 720,
     status_message_id: int | None = None,
+    download_only: bool = False,
 ):
     from services.downloader import download_video
     from services.telegram_bot import TelegramBot
@@ -267,13 +350,17 @@ def _run_telegram_job(
         total = info.get("total_bytes") or info.get("total_bytes_estimate") or 0
         if total:
             percent = min(100, int(downloaded * 100 / total))
-            set_status(f"Downloading YouTube video at {max_height}p... {percent}%")
+            set_status(f"Downloading video at {max_height}p... {percent}%")
         else:
-            set_status(f"Downloading YouTube video at {max_height}p...")
+            set_status(f"Downloading video at {max_height}p...")
 
     try:
-        _check_pipeline_keys(source_language)
-        set_status("Received. Processing captions now.")
+        if not download_only:
+            _check_pipeline_keys(source_language)
+        if download_only:
+            set_status("Received. Downloading video only.")
+        else:
+            set_status("Received. Processing captions now.")
 
         if file_id:
             jobs[job_id]["status"] = "downloading"
@@ -292,6 +379,25 @@ def _run_telegram_job(
                 shutil.move(downloaded, video_path)
         else:
             raise ValueError("Send a video file or a supported video URL.")
+
+        if download_only:
+            upload_files = split_video_by_size(
+                video_path,
+                TEMP_DIR,
+                f"{job_id}_download_upload",
+                TELEGRAM_MAX_UPLOAD_MB * 1024 * 1024,
+            )
+            upload_part_paths.extend([path for path in upload_files if path != video_path])
+            for upload_index, upload_path in enumerate(upload_files, start=1):
+                caption = "Downloaded video."
+                if len(upload_files) > 1:
+                    caption += f" Part {upload_index}/{len(upload_files)}."
+                set_status(f"Uploading original video {upload_index}/{len(upload_files)}...")
+                bot.send_document(chat_id, upload_path, caption=caption)
+            if os.path.exists(video_path):
+                os.remove(video_path)
+            set_status(f"Done. Sent {len(upload_files)} file(s).")
+            return
 
         set_status("Checking video length...")
         parts = split_video(video_path, TEMP_DIR, job_id, TELEGRAM_MAX_PART_SECONDS)
@@ -386,43 +492,93 @@ async def process(
     font_size: int = Form(default=22),
     use_emoji: bool = Form(default=False),
     source_language: str = Form(default="auto"),
+    mode: str = Form(default="caption"),
 ):
     source_language = _valid_source_language(source_language)
-    _check_pipeline_keys(source_language)
-
-    job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
-
-    video_path = str(TEMP_DIR / f"{job_id}.mp4")
+    download_only = mode == "download"
+    if not download_only:
+        _check_pipeline_keys(source_language)
 
     if file and file.filename:
         # Save uploaded file
+        job_id = str(uuid.uuid4())
+        jobs[job_id] = {"status": "starting", "steps": [], "error": None, "output": None}
+        video_path = str(TEMP_DIR / f"{job_id}.mp4")
         jobs[job_id]["status"] = "uploading"
         with open(video_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
+        if download_only:
+            _store_download_only(job_id, video_path)
+            return {"job_id": job_id}
     elif url.strip():
-        # Download from URL
-        jobs[job_id]["status"] = "downloading"
-
-        def _download():
-            from services.downloader import download_video
-            try:
-                downloaded = download_video(url.strip(), video_path.replace(".mp4", ""))
-                if os.path.exists(downloaded) and downloaded != video_path:
-                    shutil.move(downloaded, video_path)
-                _run_pipeline(job_id, video_path, font_size=font_size, use_emoji=use_emoji, source_language=source_language)
-            except Exception as e:
-                log.exception("job %s: URL pipeline failed", job_id)
-                jobs[job_id]["status"] = "error"
-                jobs[job_id]["error"] = str(e)
-
-        threading.Thread(target=_download, daemon=True).start()
+        job_id = _start_url_job(url.strip(), font_size, use_emoji, source_language, download_only=download_only)
         return {"job_id": job_id}
     else:
         raise HTTPException(status_code=400, detail="Provide a URL or upload a file.")
 
     threading.Thread(target=_run_pipeline, args=(job_id, video_path, font_size, use_emoji, source_language), daemon=True).start()
     return {"job_id": job_id}
+
+
+@app.post("/process-batch")
+async def process_batch(
+    urls: str = Form(default=""),
+    font_size: int = Form(default=22),
+    use_emoji: bool = Form(default=False),
+    source_language: str = Form(default="auto"),
+    mode: str = Form(default="caption"),
+):
+    source_language = _valid_source_language(source_language)
+    download_only = mode == "download"
+    if not download_only:
+        _check_pipeline_keys(source_language)
+
+    links = []
+    seen = set()
+    for line in urls.splitlines():
+        link = line.strip()
+        if not link or link in seen:
+            continue
+        seen.add(link)
+        links.append(link)
+
+    if not links:
+        raise HTTPException(status_code=400, detail="Provide at least one URL.")
+    if len(links) > 5:
+        raise HTTPException(status_code=400, detail="Use 5 links or fewer per batch.")
+
+    invalid = [link for link in links if not _looks_like_url(link)]
+    if invalid:
+        raise HTTPException(status_code=400, detail="Every line must be a valid http/https URL.")
+
+    batch_jobs = []
+    for index, link in enumerate(links, start=1):
+        job_id = _start_url_job(
+            link,
+            font_size,
+            use_emoji,
+            source_language,
+            start_immediately=False,
+            download_only=download_only,
+        )
+        batch_jobs.append({"job_id": job_id, "url": link, "index": index})
+
+    def _run_batch():
+        for item in batch_jobs:
+            job_id = item["job_id"]
+            video_path = str(TEMP_DIR / f"{job_id}.mp4")
+            _run_url_job(
+                job_id,
+                item["url"],
+                video_path,
+                font_size,
+                use_emoji,
+                source_language,
+                download_only=download_only,
+            )
+
+    threading.Thread(target=_run_batch, daemon=True).start()
+    return {"jobs": batch_jobs}
 
 
 @app.post("/telegram/webhook")
@@ -442,6 +598,7 @@ async def telegram_webhook(request: Request):
 
     text = _telegram_text(message)
     file_id = _telegram_file_id(message)
+    url_text, download_only = _parse_telegram_url_command(text)
 
     if text in {"/start", "/help"}:
         from services.telegram_bot import TelegramBot
@@ -450,7 +607,8 @@ async def telegram_webhook(request: Request):
             chat_id,
             "Send me a video file or a TikTok/YouTube/Instagram URL. "
             "I will translate English audio to Arabic captions with font size 14 and no emoji. "
-            "Use /quality 720 or /quality 1080. Default is 720p.",
+            "Use /quality 720 or /quality 1080. Default is 720p. "
+            "Use /download followed by a URL to download without captions.",
         )
         return {"ok": True}
 
@@ -460,7 +618,13 @@ async def telegram_webhook(request: Request):
         TelegramBot(TELEGRAM_BOT_TOKEN).send_message(chat_id, _set_telegram_quality(chat_id, text))
         return {"ok": True}
 
-    if not file_id and not _looks_like_url(text):
+    if download_only and not url_text:
+        from services.telegram_bot import TelegramBot
+
+        TelegramBot(TELEGRAM_BOT_TOKEN).send_message(chat_id, "Use /download followed by the video URL.")
+        return {"ok": True}
+
+    if not file_id and not _looks_like_url(url_text):
         from services.telegram_bot import TelegramBot
 
         TelegramBot(TELEGRAM_BOT_TOKEN).send_message(
@@ -473,7 +637,11 @@ async def telegram_webhook(request: Request):
 
     status_message = TelegramBot(TELEGRAM_BOT_TOKEN).send_message(
         chat_id,
-        f"Queued. I will download at {_telegram_quality(chat_id)}p and split long videos automatically.",
+        (
+            f"Queued. I will download at {_telegram_quality(chat_id)}p without captions."
+            if download_only
+            else f"Queued. I will download at {_telegram_quality(chat_id)}p and split long videos automatically."
+        ),
     )
     status_message_id = status_message.get("message_id")
 
@@ -482,9 +650,10 @@ async def telegram_webhook(request: Request):
         kwargs={
             "chat_id": chat_id,
             "file_id": file_id,
-            "url": text if _looks_like_url(text) else "",
+            "url": url_text if _looks_like_url(url_text) else "",
             "max_height": _telegram_quality(chat_id),
             "status_message_id": status_message_id,
+            "download_only": download_only,
         },
         daemon=True,
     ).start()
