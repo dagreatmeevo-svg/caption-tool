@@ -608,6 +608,7 @@ async def telegram_webhook(request: Request):
             "Send me a video file or a TikTok/YouTube/Instagram URL. "
             "I will translate English audio to Arabic captions with font size 14 and no emoji. "
             "Use /quality 720 or /quality 1080. Default is 720p. "
+            "MoboReels and GoodShort share links are supported. "
             "Use /download followed by a URL to download without captions.",
         )
         return {"ok": True}

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -85,6 +86,12 @@ def _is_cdreader_share_url(url: str) -> bool:
     return parsed.hostname in {"p.cdreader.com", "www.cdreader.com", "cdreader.com"} and (
         parsed.path.endswith("/videoShare.html") or "videoShare.html" in parsed.path
     )
+
+
+def _is_goodshort_share_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    return hostname in {"goodshort.com", "www.goodshort.com"} and parsed.path.startswith("/share/")
 
 
 def _cdreader_nonce(length: int = 32) -> str:
@@ -174,6 +181,22 @@ def _extract_cdreader_media_url(url: str) -> str:
     return media_url
 
 
+def _extract_goodshort_media_url(url: str) -> str:
+    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+    response.raise_for_status()
+    match = re.search(r"window\.__INITIAL_STATE__=(.*?);\(function\(\)", response.text, re.S)
+    if not match:
+        raise RuntimeError("GoodShort share page did not include public video data.")
+
+    state = json.loads(match.group(1))
+    first_chapter = (state.get("shareModule") or {}).get("firstChapter") or {}
+    media_url = first_chapter.get("m3u8Path")
+    if not media_url:
+        raise RuntimeError("GoodShort share page did not expose a downloadable episode.")
+
+    return media_url
+
+
 def _download_direct_url(url: str, output_path: str, progress_callback=None, headers: dict | None = None) -> str:
     final_path = output_path if Path(output_path).suffix else f"{output_path}.mp4"
     Path(final_path).parent.mkdir(parents=True, exist_ok=True)
@@ -206,6 +229,7 @@ def _download_direct_url(url: str, output_path: str, progress_callback=None, hea
 
 def download_video(url: str, output_path: str, max_height: int | None = None, progress_callback=None) -> str:
     """Download video from URL using yt-dlp. Returns the final file path."""
+    http_headers = None
     if _is_cdreader_share_url(url):
         media_url = _extract_cdreader_media_url(url)
         log.info("resolved MoboReels/CDReader share URL to media URL")
@@ -219,6 +243,13 @@ def download_video(url: str, output_path: str, max_height: int | None = None, pr
                 "Origin": "https://p.cdreader.com",
             },
         )
+    if _is_goodshort_share_url(url):
+        url = _extract_goodshort_media_url(url)
+        http_headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.goodshort.com/",
+        }
+        log.info("resolved GoodShort share URL to HLS media URL")
 
     ydl_opts = {
         "format": _format_selector(max_height),
@@ -226,8 +257,11 @@ def download_video(url: str, output_path: str, max_height: int | None = None, pr
         "outtmpl": output_path,
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,
         "noplaylist": True,
     }
+    if http_headers:
+        ydl_opts["http_headers"] = http_headers
     if progress_callback:
         ydl_opts["progress_hooks"] = [progress_callback]
 
