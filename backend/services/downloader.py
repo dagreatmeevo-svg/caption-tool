@@ -17,6 +17,10 @@ _COOKIE_ENV = "YTDLP_COOKIES"
 _COOKIE_B64_ENV = "YTDLP_COOKIES_B64"
 _COOKIE_B64_PART_PREFIX = "YTDLP_COOKIES_B64_"
 _COOKIE_FILE_ENV = "YTDLP_COOKIES_FILE"
+_INSTAGRAM_COOKIE_ENV = "INSTAGRAM_COOKIES"
+_INSTAGRAM_COOKIE_B64_ENV = "INSTAGRAM_COOKIES_B64"
+_INSTAGRAM_COOKIE_B64_PART_PREFIX = "INSTAGRAM_COOKIES_B64_"
+_INSTAGRAM_COOKIE_FILE_ENV = "INSTAGRAM_COOKIES_FILE"
 log = logging.getLogger(__name__)
 
 _CDREADER_API_BASE = "https://videoapi-hk.cdreader.com/video"
@@ -33,21 +37,56 @@ def _joined_env_parts(prefix: str) -> tuple[str, int]:
     return "".join(values), len(values)
 
 
-def _cookies_file() -> str | None:
-    configured = os.getenv(_COOKIE_FILE_ENV)
+def _is_instagram_url(url: str) -> bool:
+    hostname = (urlparse(url).hostname or "").lower()
+    return hostname == "instagram.com" or hostname.endswith(".instagram.com")
+
+
+def _has_cookie_config(cookie_env: str, b64_env: str, part_prefix: str, file_env: str) -> bool:
+    return bool(
+        os.getenv(cookie_env)
+        or os.getenv(b64_env)
+        or os.getenv(f"{part_prefix}1")
+        or os.getenv(file_env)
+    )
+
+
+def _cookies_file(url: str) -> str | None:
+    label = "yt-dlp"
+    cookie_env = _COOKIE_ENV
+    b64_env = _COOKIE_B64_ENV
+    part_prefix = _COOKIE_B64_PART_PREFIX
+    file_env = _COOKIE_FILE_ENV
+    filename = "youtube_cookies.txt"
+
+    if _is_instagram_url(url) and _has_cookie_config(
+        _INSTAGRAM_COOKIE_ENV,
+        _INSTAGRAM_COOKIE_B64_ENV,
+        _INSTAGRAM_COOKIE_B64_PART_PREFIX,
+        _INSTAGRAM_COOKIE_FILE_ENV,
+    ):
+        label = "Instagram"
+        cookie_env = _INSTAGRAM_COOKIE_ENV
+        b64_env = _INSTAGRAM_COOKIE_B64_ENV
+        part_prefix = _INSTAGRAM_COOKIE_B64_PART_PREFIX
+        file_env = _INSTAGRAM_COOKIE_FILE_ENV
+        filename = "instagram_cookies.txt"
+
+    configured = os.getenv(file_env)
     if configured and os.path.exists(configured):
+        log.info("%s cookies loaded from configured file", label)
         return configured
 
-    cookies = os.getenv(_COOKIE_ENV)
-    chunked_cookies, chunk_count = _joined_env_parts(_COOKIE_B64_PART_PREFIX)
-    encoded_cookies = chunked_cookies or os.getenv(_COOKIE_B64_ENV)
+    cookies = os.getenv(cookie_env)
+    chunked_cookies, chunk_count = _joined_env_parts(part_prefix)
+    encoded_cookies = chunked_cookies or os.getenv(b64_env)
     if not cookies and encoded_cookies:
         try:
             cookies = base64.b64decode(encoded_cookies).decode("utf-8")
         except Exception as exc:
             raise RuntimeError(
-                "YouTube cookies are configured but could not be decoded. "
-                "Recreate the YTDLP_COOKIES_B64 variables from the cookies file."
+                f"{label} cookies are configured but could not be decoded. "
+                f"Recreate the {b64_env} variables from the cookies file."
             ) from exc
     if not cookies:
         log.warning("yt-dlp cookies are not configured")
@@ -58,14 +97,14 @@ def _cookies_file() -> str | None:
         cookies += "\n"
 
     if "# Netscape HTTP Cookie File" not in cookies[:500]:
-        log.warning("yt-dlp cookies do not look like a Netscape cookies export")
+        log.warning("%s cookies do not look like a Netscape cookies export", label)
 
     cookie_rows = [line for line in cookies.splitlines() if line and not line.startswith("#")]
-    path = Path(__file__).resolve().parent.parent / "temp" / "youtube_cookies.txt"
+    path = Path(__file__).resolve().parent.parent / "temp" / filename
     path.parent.mkdir(exist_ok=True)
     if not path.exists() or path.read_text(encoding="utf-8", errors="ignore") != cookies:
         path.write_text(cookies, encoding="utf-8")
-    log.info("yt-dlp cookies loaded: chunks=%s rows=%s path=%s", chunk_count, len(cookie_rows), path)
+    log.info("%s cookies loaded: chunks=%s rows=%s path=%s", label, chunk_count, len(cookie_rows), path)
     return str(path)
 
 
@@ -265,7 +304,7 @@ def download_video(url: str, output_path: str, max_height: int | None = None, pr
     if progress_callback:
         ydl_opts["progress_hooks"] = [progress_callback]
 
-    cookies_file = _cookies_file()
+    cookies_file = _cookies_file(url)
     if cookies_file:
         ydl_opts["cookiefile"] = cookies_file
 
@@ -280,6 +319,17 @@ def download_video(url: str, output_path: str, max_height: int | None = None, pr
             return filename
     except DownloadError as exc:
         message = str(exc)
+        message_lower = message.lower()
+        if _is_instagram_url(url) and any(
+            marker in message_lower
+            for marker in ("requested content is not available", "rate-limit", "login required")
+        ):
+            raise RuntimeError(
+                "Instagram rejected the download because login cookies are missing, expired, "
+                "or the post is unavailable to that account. Export fresh Instagram cookies in "
+                "Netscape format, set Railway variables INSTAGRAM_COOKIES_B64_1..N "
+                "(or INSTAGRAM_COOKIES_B64), then redeploy."
+            ) from exc
         if "Sign in to confirm" in message or "not a bot" in message:
             raise RuntimeError(
                 "YouTube rejected the download as not signed in. "

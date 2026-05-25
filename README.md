@@ -107,6 +107,17 @@ Some YouTube URLs require logged-in cookies and will fail with "Sign in to confi
 
 Cookies are secrets. Rotate/re-export them if YouTube starts rejecting downloads again.
 
+### Instagram cookies
+
+Instagram may require a signed-in session or rate-limit unauthenticated downloads. Export `instagram.com` cookies in Netscape format from a browser where the requested reel is viewable, then add them to Railway using separate variables:
+
+- `INSTAGRAM_COOKIES_B64` - base64-encoded Instagram cookies file.
+- `INSTAGRAM_COOKIES_B64_1`, `INSTAGRAM_COOKIES_B64_2`, etc. - use numbered chunks if a value exceeds Railway's size limit.
+- `INSTAGRAM_COOKIES` - raw Netscape cookies text.
+- `INSTAGRAM_COOKIES_FILE` - local/dev file path.
+
+Keep the existing `YTDLP_COOKIES_*` variables for YouTube. Instagram cookies expire or become invalid when the browser session changes, so re-export them when downloads start failing again.
+
 ### Vercel
 
 Vercel is not the recommended primary deployment for this app because the backend needs FFmpeg and longer-running video jobs. The existing `vercel.json` can host the static frontend only, but the current simplest production setup is one Railway service serving both frontend and backend.
